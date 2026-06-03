@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Assembly Vision Monitor</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body data-auto-cam="{{ 'true' if (source == 'camera' and not cam_connected) else 'false' }}">
+    <header class="top-header">
+        <div class="logo-area">
+            <h1>Assembly Vision Monitor</h1>
+            <p>Vidana Consulting — AI Vision Solutions</p>
+        </div>
+        <div class="header-status">
+            <span class="badge">{{ 'IP CAM' if cam_connected else 'CAMERA' }}</span>
+            <span class="badge active-badge">• LIVE</span>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <!-- Left Sidebar -->
+        <aside class="sidebar-left" id="sidebar-left">
+            <div class="sidebar-header" onclick="document.getElementById('sidebar-left').classList.toggle('collapsed')">
+                <span class="sidebar-title">⚙️ SETTINGS</span>
+                <span class="sidebar-icon">◀</span>
+            </div>
+            <div class="sidebar-content">
+                <div class="section">
+                <h3>SOURCE</h3>
+                <div class="btn-group">
+                    <button type="button" class="btn {{ 'active' if source == 'camera' else '' }}" onclick="openCamModal()" id="btn-camera">📷 Camera</button>
+                    <a href="/set_source/video" class="btn {{ 'active' if source == 'video' else '' }}" id="btn-video">🎬 Video</a>
+                </div>
+                {% if source == 'camera' and cam_connected %}
+                <div class="cam-status-badge connected">🟢 IP Cam: {{ cam_ip }}</div>
+                {% elif source == 'camera' %}
+                <div class="cam-status-badge">⚪ Local Webcam</div>
+                {% endif %}
+                
+                {% if source == 'video' %}
+                <form action="/upload_video" method="post" enctype="multipart/form-data">
+                    <div class="upload-drop-zone">
+                        📁 Drop video or click to browse
+                        <input type="file" name="video_file" accept=".mp4,.avi,.mov,.mkv" required onchange="this.form.submit()">
+                    </div>
+                </form>
+                {% endif %}
+
+                <div class="status-text">• {{ video_name }}</div>
+                
+                <a href="/stop" class="btn btn-danger stop-btn">◼ Stop</a>
+                <a href="/restart" class="btn btn-secondary restart-btn">↺ Restart</a>
+            </div>
+
+            <div class="section">
+                <h3>CONTROLS</h3>
+                <a href="/toggle_resume" class="btn btn-success resume-btn">
+                    {% if paused %}
+                        ▶ Resume
+                    {% else %}
+                        ⏸ Pause
+                    {% endif %}
+                </a>
+            </div>
+            
+            <div class="section">
+                <h3>EDGE THRESHOLD</h3>
+                <form action="/set_threshold" method="get" class="slider-form">
+                    <input type="range" name="val" min="1" max="10" value="{{ threshold }}" onchange="this.form.submit()">
+                    <span class="slider-val">{{ threshold }}</span>
+                </form>
+                <p class="help-text">Lower = more sensitive</p>
+            </div>
+            </div>
+        </aside>
+
+        <!-- Center Video Feed -->
+        <main class="video-center">
+            <div class="video-header">
+                <span class="feed-label">LIVE FEED <span class="res">640×480</span></span>
+            </div>
+            <div class="video-wrapper">
+                <img src="/video_feed" alt="Video Feed" class="video-stream">
+            </div>
+        </main>
+
+        <!-- Right Sidebar -->
+        <aside class="sidebar-right stats-body">
+            <div class="stats-content">
+                
+                <div class="status-box {{ 'defect-box' if defect else '' }}" id="status-box">
+                    <h3 class="status-title {{ 'status-defect-title' if defect else '' }}" id="status-title">
+                        {% if defect %}
+                            ⚠ DEFECT DETECTED
+                        {% else %}
+                            STAGE {{ current_step }} —
+                            {% if current_step == 1 %}Inner rings: {{ inner_count }}/3 placed
+                            {% elif current_step == 2 %}Outer rings: {{ outer_count }}/3 placed
+                            {% else %}Complete
+                            {% endif %}
+                        {% endif %}
+                    </h3>
+
+                    {% if defect %}
+                        <p class="status-red" id="status-desc">⚠ Inner ring missing: {{ missing_inner }} plate(s) — outer placed without inner!</p>
+                    {% elif current_step == 1 %}
+                        {% if (3 - inner_count) > 0 %}
+                        <p class="status-red" id="status-desc">Inner ring missing: {{ 3 - inner_count }} plate(s)</p>
+                        {% else %}
+                        <p class="status-green" id="status-desc">All inner rings placed</p>
+                        {% endif %}
+                    {% elif current_step == 2 %}
+                        {% if (3 - outer_count) > 0 %}
+                        <p class="status-red" id="status-desc">Outer ring missing: {{ 3 - outer_count }} plate(s)</p>
+                        {% else %}
+                        <p class="status-green" id="status-desc">All outer rings placed</p>
+                        {% endif %}
+                    {% else %}
+                        <p class="status-green" id="status-desc">✓ Assembly complete</p>
+                    {% endif %}
+                    <div class="steps-container" id="steps-container">
+                        <div class="step-group {{ 'done' if current_step > 1 else ('active' if current_step == 1 else '') }}" id="step-1">
+                            <div class="step-dot"></div>
+                            <div class="step-text">Inner</div>
+                        </div>
+                        <div class="step-line {{ 'done' if current_step > 1 else '' }}" id="step-line-1"></div>
+                        <div class="step-group {{ 'done' if current_step > 2 else ('active' if current_step == 2 else '') }}" id="step-2">
+                            <div class="step-dot"></div>
+                            <div class="step-text">Outer</div>
+                        </div>
+                        <div class="step-line {{ 'done' if current_step > 2 else '' }}" id="step-line-2"></div>
+                        <div class="step-group {{ 'done' if current_step > 3 else ('active' if current_step == 3 else '') }}" id="step-3">
+                            <div class="step-dot"></div>
+                            <div class="step-text">Done</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="missing-parts">
+                    <h4>MISSING PARTS</h4>
+                    <div class="part-card {{ 'ok' if inner_count == 3 else 'missing' }}" id="inner-card">
+                        <div class="part-info">
+                            <span class="icon">⊚</span> Inner Rings
+                            <div class="part-sub" id="inner-sub">{{ inner_count }} of 3 placed</div>
+                        </div>
+                        <div class="part-badge" id="inner-badge">{{ inner_count }}/3 {{ 'OK' if inner_count == 3 else 'MISSING' }}</div>
+                    </div>
+
+                    <div class="part-card {{ 'ok' if outer_count == 3 else 'missing' }}" id="outer-card">
+                        <div class="part-info">
+                            <span class="icon">◎</span> Outer Rings
+                            <div class="part-sub" id="outer-sub">{{ outer_count }} of 3 placed</div>
+                        </div>
+                        <div class="part-badge" id="outer-badge">{{ outer_count }}/3 {{ 'OK' if outer_count == 3 else 'MISSING' }}</div>
+                    </div>
+                </div>
+
+                <div class="per-plate">
+                    <h4>PER-PLATE STATUS</h4>
+                    <div class="plate-grid" id="plate-grid">
+                        {% for p in plates %}
+                        <div class="plate-cell" id="plate-cell-{{ loop.index0 }}">
+                            <div class="plate-id">{{ p.id }}</div>
+                            <div class="status-cube {{ 'ok' if p.inner_ok else 'missing' }}" id="cube-{{ loop.index0 }}-inner">
+                                {% if p.inner_ok %}✓ INNER{% else %}✕ INNER{% endif %}
+                            </div>
+                            <div class="status-cube {{ 'ok' if p.outer_ok else 'missing' }}" id="cube-{{ loop.index0 }}-outer">
+                                {% if p.outer_ok %}✓ OUTER{% else %}✕ OUTER{% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="detection-counts">
+                    <h4>DETECTION COUNTS</h4>
+                    <div class="counts-row">
+                        <div class="count-item {{ 'count-full' if inner_count == 3 else '' }}" id="cnt-inner">
+                            <div class="count-val" id="cnt-inner-val">{{ inner_count }}/3</div>
+                            <div class="count-label">Inner</div>
+                        </div>
+                        <div class="count-item {{ 'count-full' if outer_count == 3 else '' }}" id="cnt-outer">
+                            <div class="count-val" id="cnt-outer-val">{{ outer_count }}/3</div>
+                            <div class="count-label">Outer</div>
+                        </div>
+                        <div class="count-item {{ 'count-full' if current_step == 3 else '' }}" id="cnt-stage">
+                            <div class="count-val" id="cnt-stage-val">{{ current_step }}/3</div>
+                            <div class="count-label">Stage</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Simple script to reload page every 2 seconds ONLY IF not video feed? 
+                 Actually, doing full page reload will interrupt the video stream.
+                 To avoid JS entirely as requested, the page will be static unless refreshed manually.
+                 If you want it to auto-refresh without interrupting the video, we MUST use a small script. -->
+
+<!-- ═══ IP CAMERA CREDENTIAL MODAL ═══ -->
+<div id="camModal" class="modal-overlay" onclick="closeCamModal(event)">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+            <span class="modal-icon">📷</span>
+            <h2 id="modal-title">IP Camera Setup</h2>
+            <button class="modal-close" onclick="document.getElementById('camModal').classList.remove('open')" aria-label="Close">✕</button>
+        </div>
+        <p class="modal-subtitle">Enter your CP Plus (or any RTSP) camera credentials</p>
+
+        <form action="/set_camera_creds" method="post" id="cam-form">
+            <div class="form-row-2">
+                <div class="form-group">
+                    <label for="cam_ip">Camera IP Address</label>
+                    <div class="input-row">
+                        <span class="input-icon">🌐</span>
+                        <input type="text" id="cam_ip" name="cam_ip" placeholder="e.g. 192.168.1.64" required
+                               value="{{ cam_ip }}" autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="cam_port">Port</label>
+                    <div class="input-row">
+                        <span class="input-icon">🔌</span>
+                        <input type="text" id="cam_port" name="cam_port" placeholder="554"
+                               value="{{ cam_port if cam_port else '554' }}" autocomplete="off">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row-2">
+                <div class="form-group">
+                    <label for="cam_user">Username</label>
+                    <div class="input-row">
+                        <span class="input-icon">👤</span>
+                        <input type="text" id="cam_user" name="cam_user" placeholder="admin"
+                               value="{{ cam_user if cam_user else 'admin' }}" autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="cam_pass">Password</label>
+                    <div class="input-row">
+                        <span class="input-icon">🔒</span>
+                        <input type="password" id="cam_pass" name="cam_pass" placeholder="••••••••" autocomplete="off">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="cam_stream">Stream Path
+                    <span class="label-hint">Leave default for stream path</span>
+                </label>
+                <div class="input-row">
+                    <span class="input-icon">📡</span>
+                    <input type="text" id="cam_stream" name="cam_stream"
+                           placeholder="/cam/realmonitor?channel=1&amp;subtype=0"
+                           value="{{ cam_stream if cam_stream else '/cam/realmonitor?channel=1&subtype=0' }}"
+                           autocomplete="off">
+                </div>
+                <p class="field-hint">Full RTSP URL: <code id="rtsp-preview">rtsp://…</code></p>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="modal-btn-cancel" onclick="document.getElementById('camModal').classList.remove('open')">Cancel</button>
+                <button type="submit" class="modal-btn-connect" id="connect-btn">⚡ Connect Camera</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openCamModal() {
+    document.getElementById('camModal').classList.add('open');
+    updateRtspPreview();
+}
+function closeCamModal(e) {
+    if (e.target === document.getElementById('camModal')) {
+        document.getElementById('camModal').classList.remove('open');
+    }
+}
+function updateRtspPreview() {
+    const ip     = document.getElementById('cam_ip').value     || '<ip>';
+    const port   = document.getElementById('cam_port').value   || '554';
+    const user   = document.getElementById('cam_user').value   || 'admin';
+    const pass   = document.getElementById('cam_pass').value   ? '••••' : '<pass>';
+    const stream = document.getElementById('cam_stream').value || '/cam/realmonitor?channel=1&subtype=0';
+    const sep    = stream.startsWith('/') ? '' : '/';
+    document.getElementById('rtsp-preview').textContent = `rtsp://${user}:${pass}@${ip}:${port}${sep}${stream}`;
+}
+['cam_ip','cam_port','cam_user','cam_pass','cam_stream'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateRtspPreview);
+});
+
+// Auto-open modal on first page load if source is camera but not yet connected
+if (document.body.dataset.autoCam === 'true') {
+    window.addEventListener('DOMContentLoaded', () => openCamModal());
+}
+
+// Replaces the old fetch('/') which re-rendered the entire HTML page
+// and competed with the video stream thread, causing stutter.
+function applyStatus(d) {
+    const ic = d.inner_count, oc = d.outer_count, step = d.current_step;
+
+    // ─ Status box ───────────────────────────────────────────
+    const box   = document.getElementById('status-box');
+    const title = document.getElementById('status-title');
+    const desc  = document.getElementById('status-desc');
+
+    if (box) {
+        box.className = 'status-box' + (d.defect ? ' defect-box' : '');
+    }
+    if (title) {
+        if (d.defect) {
+            title.textContent = '⚠ DEFECT DETECTED';
+            title.className = 'status-title status-defect-title';
+        } else {
+            const lbl = step === 1 ? `Inner rings: ${ic}/3 placed`
+                      : step === 2 ? `Outer rings: ${oc}/3 placed`
+                      : 'Complete';
+            title.textContent = `STAGE ${step} — ${lbl}`;
+            title.className = 'status-title';
+        }
+    }
+    if (desc) {
+        if (d.defect) {
+            desc.textContent = `⚠ Inner ring missing: ${d.missing_inner} plate(s) — outer placed without inner!`;
+            desc.className = 'status-red';
+        } else if (step === 1) {
+            desc.textContent = d.missing_inner > 0 ? `Inner ring missing: ${d.missing_inner} plate(s)` : 'All inner rings placed';
+            desc.className   = d.missing_inner > 0 ? 'status-red' : 'status-green';
+        } else if (step === 2) {
+            desc.textContent = d.missing_outer > 0 ? `Outer ring missing: ${d.missing_outer} plate(s)` : 'All outer rings placed';
+            desc.className   = d.missing_outer > 0 ? 'status-red' : 'status-green';
+        } else {
+            desc.textContent = '✓ Assembly complete';
+            desc.className = 'status-green';
+        }
+    }
+
+    // ─ Step dots ─────────────────────────────────────────
+    function sg(el, s) {
+        if (!el) return;
+        el.className = 'step-group' + (step > s ? ' done' : step === s ? ' active' : '');
+    }
+    function sl(el, s) {
+        if (!el) return;
+        el.className = 'step-line' + (step > s ? ' done' : '');
+    }
+    sg(document.getElementById('step-1'), 1);
+    sl(document.getElementById('step-line-1'), 1);
+    sg(document.getElementById('step-2'), 2);
+    sl(document.getElementById('step-line-2'), 2);
+    sg(document.getElementById('step-3'), 3);
+
+    // ─ Missing parts cards ───────────────────────────────
+    const innerCard  = document.getElementById('inner-card');
+    const innerSub   = document.getElementById('inner-sub');
+    const innerBadge = document.getElementById('inner-badge');
+    if (innerCard)  innerCard.className  = 'part-card ' + (ic === 3 ? 'ok' : 'missing');
+    if (innerSub)   innerSub.textContent = `${ic} of 3 placed`;
+    if (innerBadge) innerBadge.textContent = `${ic}/3 ${ic === 3 ? 'OK' : 'MISSING'}`;
+
+    const outerCard  = document.getElementById('outer-card');
+    const outerSub   = document.getElementById('outer-sub');
+    const outerBadge = document.getElementById('outer-badge');
+    if (outerCard)  outerCard.className  = 'part-card ' + (oc === 3 ? 'ok' : 'missing');
+    if (outerSub)   outerSub.textContent = `${oc} of 3 placed`;
+    if (outerBadge) outerBadge.textContent = `${oc}/3 ${oc === 3 ? 'OK' : 'MISSING'}`;
+
+    // ─ Per-plate cubes ─────────────────────────────────
+    if (d.plates) {
+        d.plates.forEach((p, i) => {
+            const ci = document.getElementById(`cube-${i}-inner`);
+            const co = document.getElementById(`cube-${i}-outer`);
+            if (ci) { ci.textContent = p.inner_ok ? '✓ INNER' : '✕ INNER'; ci.className = 'status-cube ' + (p.inner_ok ? 'ok' : 'missing'); }
+            if (co) { co.textContent = p.outer_ok ? '✓ OUTER' : '✕ OUTER'; co.className = 'status-cube ' + (p.outer_ok ? 'ok' : 'missing'); }
+        });
+    }
+
+    // ─ Detection counts ────────────────────────────────
+    const cntI = document.getElementById('cnt-inner');
+    const cntO = document.getElementById('cnt-outer');
+    const cntS = document.getElementById('cnt-stage');
+    const vI   = document.getElementById('cnt-inner-val');
+    const vO   = document.getElementById('cnt-outer-val');
+    const vS   = document.getElementById('cnt-stage-val');
+    if (cntI) cntI.className = 'count-item' + (ic === 3 ? ' count-full' : '');
+    if (cntO) cntO.className = 'count-item' + (oc === 3 ? ' count-full' : '');
+    if (cntS) cntS.className = 'count-item' + (step === 3 ? ' count-full' : '');
+    if (vI)   vI.textContent = `${ic}/3`;
+    if (vO)   vO.textContent = `${oc}/3`;
+    if (vS)   vS.textContent = `${step}/3`;
+}
+
+setInterval(() => {
+    fetch('/status')
+        .then(r => r.json())
+        .then(applyStatus)
+        .catch(() => {});
+}, 1000);
+
+</script>
+</body>
+</html>
