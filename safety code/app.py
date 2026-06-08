@@ -1,7 +1,6 @@
 import cv2
 import os
 import threading
-import datetime
 # pyrefly: ignore [missing-import]
 from flask import Flask, render_template, Response, request, redirect, url_for
 import numpy as np
@@ -11,119 +10,6 @@ except ImportError:
     YOLO = None
 
 app = Flask(__name__, template_folder='.', static_folder='.', static_url_path='')
-
-def get_current_date_str():
-    return datetime.datetime.now().strftime("%Y-%m-%d")
-
-def load_cycle_count():
-    file_path = os.path.join(os.path.dirname(__file__), 'cycle_counts.txt')
-    current_date = get_current_date_str()
-    count = 0
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(':')
-                if len(parts) == 2:
-                    date_str = parts[0].strip()
-                    val_str = parts[1].strip()
-                    if date_str == current_date:
-                        count = int(val_str)
-                        break
-        except Exception as e:
-            print(f"Error reading cycle_counts.txt: {e}")
-    return count
-
-def save_cycle_count(count):
-    file_path = os.path.join(os.path.dirname(__file__), 'cycle_counts.txt')
-    current_date = get_current_date_str()
-    
-    lines = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        except Exception as e:
-            print(f"Error reading cycle_counts.txt: {e}")
-            
-    lines = [line.strip() for line in lines if line.strip()]
-    
-    date_line_idx = -1
-    for i, line in enumerate(lines):
-        if line.startswith(f"{current_date}:") or line == current_date:
-            date_line_idx = i
-            break
-            
-    if date_line_idx != -1:
-        lines[date_line_idx] = f"{current_date}: {count}"
-        if count == 0:
-            remove_idx = date_line_idx + 1
-            while remove_idx < len(lines):
-                if not lines[remove_idx].startswith("-"):
-                    break
-                lines.pop(remove_idx)
-    else:
-        lines.append(f"{current_date}: {count}")
-        
-    try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            for line in lines:
-                f.write(line + '\n')
-    except Exception as e:
-        print(f"Error writing to cycle_counts.txt: {e}")
-
-def save_cycle_count_with_detail(count, start_ts, end_ts, duration):
-    file_path = os.path.join(os.path.dirname(__file__), 'cycle_counts.txt')
-    current_date = get_current_date_str()
-    
-    lines = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        except Exception as e:
-            print(f"Error reading cycle_counts.txt: {e}")
-            
-    lines = [line.strip() for line in lines if line.strip()]
-    
-    date_line_idx = -1
-    for i, line in enumerate(lines):
-        if line.startswith(f"{current_date}:") or line == current_date:
-            date_line_idx = i
-            break
-            
-    detail_line = f"- Cycle {count}: Start {start_ts}, End {end_ts} (Duration: {duration:.1f}s)"
-    
-    if date_line_idx != -1:
-        lines[date_line_idx] = f"{current_date}: {count}"
-        
-        insert_idx = date_line_idx + 1
-        while insert_idx < len(lines):
-            if not lines[insert_idx].startswith("-"):
-                break
-            insert_idx += 1
-        lines.insert(insert_idx, detail_line)
-    else:
-        lines.append(f"{current_date}: {count}")
-        if count > 0:
-            lines.append(detail_line)
-            
-    try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            for line in lines:
-                f.write(line + '\n')
-    except Exception as e:
-        print(f"Error writing to cycle_counts.txt: {e}")
-
-def check_date_transition():
-    current_date = get_current_date_str()
-    if getattr(state, 'current_cycle_date', '') != current_date:
-        state.current_cycle_date = current_date
-        state.cycle_count = load_cycle_count()
 
 # Global state
 class AppState:
@@ -141,13 +27,6 @@ class AppState:
     plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
     model_loaded = False
     model = None
-    sealing_model = None
-    person_model = None
-    sealing_model_loaded = False
-    person_model_loaded = False
-    person_detected = False
-    person_count = 0
-    show_annotations = True
     new_source_path = None
     trigger_restart = False
     empty_frames = 0
@@ -158,57 +37,20 @@ class AppState:
     cam_pass = ''
     cam_stream = '/cam/realmonitor?channel=1&subtype=0'
     cam_connected = False
-    
-    # Cycle counting
-    cycle_count = 0
-    current_cycle_date = ''
-    cycle_completed_pending = False
-    
-    # Timer variables
-    cycle_active = False
-    cycle_start_time = None
-    cycle_end_time = None
-    cycle_elapsed = 0.0
-    cycle_start_timestamp = ''
-    cycle_end_timestamp = ''
-    cycle_is_completed = False
 
 state = AppState()
-state.current_cycle_date = get_current_date_str()
-state.cycle_count = load_cycle_count()
-save_cycle_count(state.cycle_count)
 
 def load_model():
-    sealing_path = os.path.join('model', 'best.pt')
-    person_path = os.path.join('model', 'person.pt')
-    
-    if YOLO is not None:
-        # Load sealing model
-        if os.path.exists(sealing_path):
-            try:
-                state.sealing_model = YOLO(sealing_path)
-                state.sealing_model_loaded = True
-                state.model = state.sealing_model
-                state.model_loaded = True
-                print("Sealing model loaded successfully")
-            except Exception as e:
-                print(f"Error loading sealing model: {e}")
-        else:
-            print("Sealing model best.pt not found. Waiting for upload...")
-            
-        # Load person model (temporarily disabled)
-        # if os.path.exists(person_path):
-        #     try:
-        #         state.person_model = YOLO(person_path)
-        #         state.person_model_loaded = True
-        #         print("Person model loaded successfully")
-        #     except Exception as e:
-        #         print(f"Error loading person model: {e}")
-        # else:
-        #     print("Person model person.pt not found.")
-        pass
+    model_path = os.path.join('model', 'best.pt')
+    if os.path.exists(model_path) and YOLO is not None:
+        try:
+            state.model = YOLO(model_path)
+            state.model_loaded = True
+            print("Model loaded successfully")
+        except Exception as e:
+            print(f"Error loading model: {e}")
     else:
-        print("Ultralytics not installed. Waiting...")
+        print("Model best.pt not found or Ultralytics not installed. Waiting for upload...")
 
 load_model()
 cap = None
@@ -267,8 +109,6 @@ class VideoProcessor:
         self.latest_frame_for_yolo = None
         self._last_boxes = None
         self._last_classes = {}
-        self._last_boxes_person = None
-        self._last_classes_person = {}
         
         self.thread = threading.Thread(target=self.update, daemon=True)
         self.thread.start()
@@ -282,25 +122,10 @@ class VideoProcessor:
             frame = self.latest_frame_for_yolo
             if frame is not None:
                 self.latest_frame_for_yolo = None   # consume immediately
-                
-                # Run sealing model
-                if getattr(state, 'sealing_model_loaded', False) and state.sealing_model:
-                    try:
-                        results = state.sealing_model(frame, conf=state.threshold / 10.0, verbose=False)
-                        self._last_boxes = results[0].boxes
-                        self._last_classes = results[0].names
-                    except Exception as e:
-                        print(f"Error running sealing model inference: {e}")
-                
-                # Run person model (temporarily disabled)
-                # if getattr(state, 'person_model_loaded', False) and state.person_model:
-                #     try:
-                #         results_p = state.person_model(frame, conf=0.4, verbose=False)
-                #         self._last_boxes_person = results_p[0].boxes
-                #         self._last_classes_person = results_p[0].names
-                #     except Exception as e:
-                #         print(f"Error running person model inference: {e}")
-                pass
+                if getattr(state, 'model_loaded', False) and state.model:
+                    results = state.model(frame, conf=state.threshold / 10.0, verbose=False)
+                    self._last_boxes  = results[0].boxes
+                    self._last_classes = results[0].names
             else:
                 time.sleep(0.003)  # only sleep when idle, not between frames
 
@@ -362,38 +187,15 @@ class VideoProcessor:
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
                 
             if getattr(state, 'trigger_restart', False):
-                if state.source == 'video' and state.video_name != 'No video found':
-                    if cap:
-                        try:
-                            cap.release()
-                        except:
-                            pass
-                    cap = VideoProcessor._open_cap(state.video_name)
-                elif state.source == 'camera':
-                    if cap:
-                        try:
-                            cap.release()
-                        except:
-                            pass
-                    if state.cam_connected and state.cam_ip:
-                        sep = '' if state.cam_stream.startswith('/') else '/'
-                        rtsp_url = f"rtsp://{state.cam_user}:{state.cam_pass}@{state.cam_ip}:{state.cam_port}{sep}{state.cam_stream}"
-                        cap = CameraReader(rtsp_url)
-                    else:
-                        cap = CameraReader(0)
-                        
+                if state.source == 'video' and state.video_name != 'No video found' and cap is not None:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 state.trigger_restart = False
                 state.inner_count = 0
                 state.outer_count = 0
-                state.cycle_completed_pending = False
-                state.cycle_active = False
-                state.cycle_elapsed = 0.0
-                state.cycle_is_completed = False
                 for p in state.plates: 
                     p['inner_ok'] = False
                     p['outer_ok'] = False
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
-                consecutive_failures = 0
                 
             if state.paused:
                 if getattr(self, 'last_frame', None) is not None:
@@ -424,18 +226,12 @@ class VideoProcessor:
 
             success, frame = cap.read()
             if not success:
-                if state.source == 'video' and state.video_name != 'No video found':
-                    if cap:
-                        try:
-                            cap.release()
-                        except:
-                            pass
-                    cap = VideoProcessor._open_cap(state.video_name)
-                    consecutive_failures = 0
+                consecutive_failures += 1
+                if state.source == 'video' and state.video_name != 'No video found' and consecutive_failures < 5:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     time.sleep(0.05)
                     continue
                 else:
-                    consecutive_failures += 1
                     frame = np.zeros((480, 640, 3), dtype=np.uint8)
                     msg = "Camera disconnected or video file invalid"
                     cv2.putText(frame, msg, (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -448,51 +244,40 @@ class VideoProcessor:
             else:
                 consecutive_failures = 0
             
-            if not getattr(state, 'sealing_model_loaded', False) and not getattr(state, 'person_model_loaded', False):
+            if not state.model_loaded:
                 load_model()
 
-            if getattr(state, 'sealing_model_loaded', False) or getattr(state, 'person_model_loaded', False):
+            if state.model_loaded and state.model:
                 # Provide the freshest frame to the inference thread
                 self.latest_frame_for_yolo = frame.copy()
 
                 boxes = getattr(self, '_last_boxes', None)
                 classes = getattr(self, '_last_classes', {})
-                boxes_person = getattr(self, '_last_boxes_person', None)
-                classes_person = getattr(self, '_last_classes_person', {})
 
-                # Proportional font scaling
-                h, w = frame.shape[:2]
-                base_w = 1280.0
-                scale_factor = w / base_w
-                font_scale = max(0.5, 1.2 * scale_factor)
-                thickness = max(1, int(3 * scale_factor))
-
-                # Always display latest annotated frame using the most recent boxes (sealing)
-                if state.show_annotations and boxes is not None and len(boxes) > 0:
+                # Always display latest annotated frame using the most recent boxes
+                if boxes is not None and len(boxes) > 0:
                     for i, c in enumerate(boxes.cls):
                         cls_name = classes[int(c)].lower()
                         coords = boxes.xyxy[i].tolist()
                         x1, y1, x2, y2 = [int(v) for v in coords]
                         # Cyan for outer, Blue for inner
                         color = (255, 255, 0) if 'outer' in cls_name else (255, 0, 0)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, max(1, int(5 * scale_factor)))
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)  # Very thick box for visibility
                         
                         # Draw label background
                         label = f"{cls_name} {boxes.conf[i]:.2f}"
                         font = cv2.FONT_HERSHEY_SIMPLEX
+                        font_scale = 1.8
+                        thickness = 4
                         (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
                         
                         # Ensure label doesn't go off the top of the screen
-                        y_bg = max(y1, th + int(15 * scale_factor))
-                        cv2.rectangle(frame, (x1, y_bg - th - int(15 * scale_factor)), (x1 + tw + int(10 * scale_factor), y_bg), color, -1)
+                        y_bg = max(y1, th + 20)
+                        cv2.rectangle(frame, (x1, y_bg - th - 20), (x1 + tw + 15, y_bg), color, -1)
                         
                         # Draw text over background (black on cyan, white on blue)
                         text_color = (0, 0, 0) if 'outer' in cls_name else (255, 255, 255)
-                        cv2.putText(frame, label, (x1 + int(5 * scale_factor), y_bg - int(5 * scale_factor)), font, font_scale, text_color, thickness)
-
-                # Draw person detections (temporarily disabled)
-                state.person_count = 0
-                state.person_detected = False
+                        cv2.putText(frame, label, (x1 + 8, y_bg - 10), font, font_scale, text_color, thickness)
 
                 # Count detections in this frame (for auto-reset logic)
                 inner_c = 0
@@ -508,52 +293,11 @@ class VideoProcessor:
                 # === BATCH COMPLETE OR ABORTED: Watch for auto-reset ===
                 if inner_c == 0 and outer_c == 0:
                     state.empty_frames += 1
-                    if state.cycle_active and not state.cycle_is_completed:
-                        state.cycle_elapsed = time.time() - state.cycle_start_time
                 else:
                     state.empty_frames = 0
-                    state.cycle_completed_pending = True
-                    if not state.cycle_active:
-                        state.cycle_active = True
-                        state.cycle_start_time = time.time()
-                        state.cycle_start_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                        state.cycle_is_completed = False
-                        state.cycle_elapsed = 0.0
-                    elif not state.cycle_is_completed:
-                        state.cycle_elapsed = time.time() - state.cycle_start_time
-                        if state.inner_count == 3 and state.outer_count == 3:
-                            state.cycle_is_completed = True
-                            state.cycle_end_time = time.time()
-                            state.cycle_end_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                            state.cycle_elapsed = state.cycle_end_time - state.cycle_start_time
                     
                 # After 2 seconds of empty view (60 frames), reset for next batch
                 if state.empty_frames > 60:
-                    if getattr(state, 'cycle_completed_pending', False):
-                        check_date_transition()
-                        state.cycle_count += 1
-                        
-                        if state.cycle_is_completed:
-                            duration = state.cycle_end_time - state.cycle_start_time
-                            end_ts = state.cycle_end_timestamp
-                        else:
-                            end_time = time.time() - 2.0
-                            duration = max(0.1, end_time - state.cycle_start_time)
-                            end_ts = datetime.datetime.fromtimestamp(end_time).strftime("%H:%M:%S")
-                            
-                        save_cycle_count_with_detail(
-                            state.cycle_count,
-                            state.cycle_start_timestamp,
-                            end_ts,
-                            duration
-                        )
-                        state.cycle_completed_pending = False
-                        print(f"Cycle completed successfully! Total today: {state.cycle_count}")
-                    
-                    state.cycle_active = False
-                    state.cycle_elapsed = 0.0
-                    state.cycle_is_completed = False
-                    
                     for p in state.plates:
                         p['inner_ok'] = False
                         p['outer_ok'] = False
@@ -643,7 +387,6 @@ def get_frame():
 
 @app.route('/')
 def index():
-    check_date_transition()
     # Step 1 → inner rings being placed
     # Step 2 → all inner done, outer rings being placed
     # Step 3 → BOTH inner AND outer all placed (true complete)
@@ -674,15 +417,7 @@ def index():
                            cam_port=state.cam_port,
                            cam_user=state.cam_user,
                            cam_stream=state.cam_stream,
-                           cam_connected=state.cam_connected,
-                           person_detected=state.person_detected,
-                           person_count=state.person_count,
-                           show_annotations=state.show_annotations,
-                           cycle_count=state.cycle_count,
-                           current_cycle_date=state.current_cycle_date,
-                           cycle_active=state.cycle_active,
-                           cycle_elapsed=state.cycle_elapsed,
-                           cycle_is_completed=state.cycle_is_completed)
+                           cam_connected=state.cam_connected)
 
 @app.route('/video_feed')
 def video_feed():
@@ -693,7 +428,6 @@ from flask import jsonify
 @app.route('/status')
 def status():
     """Lightweight JSON endpoint for sidebar live-update (avoids full page re-render)."""
-    check_date_transition()
     inner_count = state.inner_count
     outer_count = state.outer_count
 
@@ -716,14 +450,6 @@ def status():
         missing_outer=missing_outer,
         plates=state.plates,
         paused=state.paused,
-        person_detected=state.person_detected,
-        person_count=state.person_count,
-        show_annotations=state.show_annotations,
-        cycle_count=state.cycle_count,
-        current_cycle_date=state.current_cycle_date,
-        cycle_active=state.cycle_active,
-        cycle_elapsed=state.cycle_elapsed,
-        cycle_is_completed=state.cycle_is_completed,
     )
 
 @app.route('/set_source/<src>')
@@ -810,13 +536,6 @@ def stop():
 def restart():
     state.trigger_restart = True
     state.paused = False
-    state.cycle_completed_pending = False
-    return redirect(url_for('index'))
-
-@app.route('/reset_cycle')
-def reset_cycle():
-    state.cycle_count = 0
-    save_cycle_count(0)
     return redirect(url_for('index'))
 
 @app.route('/set_threshold')
@@ -824,11 +543,6 @@ def set_threshold():
     val = request.args.get('val', default=3, type=int)
     state.threshold = val
     return redirect(url_for('index'))
-
-@app.route('/toggle_annotations')
-def toggle_annotations():
-    state.show_annotations = not state.show_annotations
-    return jsonify(show_annotations=state.show_annotations)
 
 if __name__ == '__main__':
     # Start the Flask app
