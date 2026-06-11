@@ -1,6 +1,7 @@
 import cv2
 import os
 import threading
+import datetime
 # pyrefly: ignore [missing-import]
 from flask import Flask, render_template, Response, request, redirect, url_for
 import numpy as np
@@ -11,12 +12,157 @@ except ImportError:
 
 app = Flask(__name__, template_folder='.', static_folder='.', static_url_path='')
 
+def get_current_date_str():
+    return datetime.datetime.now().strftime("%Y-%m-%d")
+
+def get_log_dir():
+    dir_path = os.path.join(os.path.dirname(__file__), 'assembly_logs')
+    os.makedirs(dir_path, exist_ok=True)
+    return dir_path
+
+def get_log_file_path(date_str=None):
+    if date_str is None:
+        date_str = get_current_date_str()
+    return os.path.join(get_log_dir(), f"{date_str}.txt")
+
+def load_cycle_count():
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+    count = 0
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(':')
+                if len(parts) == 2:
+                    date_str = parts[0].strip()
+                    val_str = parts[1].strip()
+                    if date_str == current_date:
+                        count = int(val_str)
+                        break
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+    return count
+
+def save_cycle_count(count):
+    """Write today's count. When count==0, remove today's entire file."""
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+
+    if count == 0:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting {file_path}: {e}")
+        return
+
+    raw = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+
+    # Update or add today's date header count (keep existing detail lines)
+    output = [l for l in raw if l.strip()]
+    found = False
+    for i, line in enumerate(output):
+        if line.strip().startswith(f"{current_date}:"):
+            output[i] = f"{current_date}: {count}"
+            found = True
+            break
+    if not found:
+        output.insert(0, f"{current_date}: {count}")
+
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            for line in output:
+                f.write(line + '\n')
+    except Exception as e:
+        print(f"Error writing to {file_path}: {e}")
+
+def _is_date_header(line):
+    """Return True if line looks like a date header: YYYY-MM-DD: N"""
+    parts = line.split(':')
+    return len(parts) >= 2 and len(parts[0]) == 10 and parts[0][4] == '-' and parts[0][7] == '-'
+
+def save_cycle_count_with_detail(count, start_ts, end_ts, duration, is_ok=True, details=None):
+    """Append a cycle record grouped under OK / Not OK categories per date."""
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+    details_suffix = f" | {details}" if details else ""
+    new_detail = f"- Cycle {count}: Start {start_ts}, End {end_ts} (Duration: {duration:.1f}s){details_suffix}"
+
+    # --- Parse existing file into: {'ok': [...], 'notok': [...]} ---
+    sections = {'ok': [], 'notok': []}
+
+    raw = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+
+    cur_cat  = None   # 'ok' | 'notok' | None
+    for line in raw:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _is_date_header(stripped):
+            cur_cat  = None
+        elif stripped.startswith('OK:'):
+            cur_cat = 'ok'
+        elif stripped.startswith('Not OK:'):
+            cur_cat = 'notok'
+        elif stripped.startswith('- Cycle'):
+            cat = cur_cat if cur_cat else 'ok'
+            sections[cat].append(stripped)
+
+    # --- Add new cycle to today's section ---
+    cat_key = 'ok' if is_ok else 'notok'
+    sections[cat_key].append(new_detail)
+
+    # --- Write back in grouped format ---
+    ok_list    = sections['ok']
+    notok_list = sections['notok']
+    total = len(ok_list) + len(notok_list)
+    output = []
+    output.append(f"{current_date}: {total}")
+    if ok_list:
+        output.append(f"  OK: {len(ok_list)}")
+        for d in ok_list:
+            output.append(f"    {d}")
+    if notok_list:
+        output.append(f"  Not OK: {len(notok_list)}")
+        for d in notok_list:
+            output.append(f"    {d}")
+
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            for line in output:
+                f.write(line + '\n')
+    except Exception as e:
+        print(f"Error writing to {file_path}: {e}")
+
+def check_date_transition():
+    current_date = get_current_date_str()
+    if getattr(state, 'current_cycle_date', '') != current_date:
+        state.current_cycle_date = current_date
+        state.cycle_count = load_cycle_count()
+
 # Global state
 class AppState:
     paused = False
     source = 'camera'  # 'camera' or 'video'
     video_name = 'Camera 0'
-    threshold = 7
+    threshold = 6.0
     inner_count = 0
     outer_count = 0
     plates = [
@@ -27,6 +173,13 @@ class AppState:
     plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
     model_loaded = False
     model = None
+    sealing_model = None
+    person_model = None
+    sealing_model_loaded = False
+    person_model_loaded = False
+    person_detected = False
+    person_count = 0
+    show_annotations = True
     new_source_path = None
     trigger_restart = False
     empty_frames = 0
@@ -37,20 +190,67 @@ class AppState:
     cam_pass = ''
     cam_stream = '/cam/realmonitor?channel=1&subtype=0'
     cam_connected = False
+    
+    # Cycle counting
+    cycle_count = 0
+    current_cycle_date = ''
+    cycle_completed_pending = False
+    
+    # Timer variables
+    cycle_active = False
+    cycle_start_time = None
+    cycle_end_time = None
+    cycle_elapsed = 0.0
+    cycle_start_timestamp = ''
+    cycle_end_timestamp = ''
+    cycle_is_completed = False
+    cycle_logged = False
+
+    # Phase gate: False = inner phase (monitor inner live)
+    #             True  = outer phase (inner locked, monitor outer live)
+    outer_phase_started = False
+    # One-way latch: becomes True the first time inner_ok turns True for each cylinder.
+    # Never cleared during Phase 1 — used as the snapshot when outer phase begins.
+    inner_ever_confirmed = [False, False, False]
+    # Snapshot locked at phase transition — hard-locks inner_ok for rest of cycle.
+    inner_snapshot = [False, False, False]
 
 state = AppState()
+state.current_cycle_date = get_current_date_str()
+state.cycle_count = load_cycle_count()
+save_cycle_count(state.cycle_count)
 
 def load_model():
-    model_path = os.path.join('model', 'best.pt')
-    if os.path.exists(model_path) and YOLO is not None:
-        try:
-            state.model = YOLO(model_path)
-            state.model_loaded = True
-            print("Model loaded successfully")
-        except Exception as e:
-            print(f"Error loading model: {e}")
+    sealing_path = os.path.join('model', 'best.pt')
+    person_path = os.path.join('model', 'person.pt')
+    
+    if YOLO is not None:
+        # Load sealing model
+        if os.path.exists(sealing_path):
+            try:
+                state.sealing_model = YOLO(sealing_path)
+                state.sealing_model_loaded = True
+                state.model = state.sealing_model
+                state.model_loaded = True
+                print("Sealing model loaded successfully")
+            except Exception as e:
+                print(f"Error loading sealing model: {e}")
+        else:
+            print("Sealing model best.pt not found. Waiting for upload...")
+            
+        # Load person model (temporarily disabled)
+        # if os.path.exists(person_path):
+        #     try:
+        #         state.person_model = YOLO(person_path)
+        #         state.person_model_loaded = True
+        #         print("Person model loaded successfully")
+        #     except Exception as e:
+        #         print(f"Error loading person model: {e}")
+        # else:
+        #     print("Person model person.pt not found.")
+        pass
     else:
-        print("Model best.pt not found or Ultralytics not installed. Waiting for upload...")
+        print("Ultralytics not installed. Waiting...")
 
 load_model()
 cap = None
@@ -109,6 +309,8 @@ class VideoProcessor:
         self.latest_frame_for_yolo = None
         self._last_boxes = None
         self._last_classes = {}
+        self._last_boxes_person = None
+        self._last_classes_person = {}
         
         self.thread = threading.Thread(target=self.update, daemon=True)
         self.thread.start()
@@ -122,10 +324,25 @@ class VideoProcessor:
             frame = self.latest_frame_for_yolo
             if frame is not None:
                 self.latest_frame_for_yolo = None   # consume immediately
-                if getattr(state, 'model_loaded', False) and state.model:
-                    results = state.model(frame, conf=state.threshold / 10.0, verbose=False)
-                    self._last_boxes  = results[0].boxes
-                    self._last_classes = results[0].names
+                
+                # Run sealing model
+                if getattr(state, 'sealing_model_loaded', False) and state.sealing_model:
+                    try:
+                        results = state.sealing_model(frame, conf=state.threshold / 10.0, verbose=False)
+                        self._last_boxes = results[0].boxes
+                        self._last_classes = results[0].names
+                    except Exception as e:
+                        print(f"Error running sealing model inference: {e}")
+                
+                # Run person model (temporarily disabled)
+                # if getattr(state, 'person_model_loaded', False) and state.person_model:
+                #     try:
+                #         results_p = state.person_model(frame, conf=0.4, verbose=False)
+                #         self._last_boxes_person = results_p[0].boxes
+                #         self._last_classes_person = results_p[0].names
+                #     except Exception as e:
+                #         print(f"Error running person model inference: {e}")
+                pass
             else:
                 time.sleep(0.003)  # only sleep when idle, not between frames
 
@@ -181,21 +398,50 @@ class VideoProcessor:
                 consecutive_failures = 0
                 state.inner_count = 0
                 state.outer_count = 0
+                state.outer_phase_started = False
+                state.inner_ever_confirmed = [False, False, False]
+                state.inner_snapshot = [False, False, False]
                 for p in state.plates: 
                     p['inner_ok'] = False
                     p['outer_ok'] = False
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
                 
             if getattr(state, 'trigger_restart', False):
-                if state.source == 'video' and state.video_name != 'No video found' and cap is not None:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                if state.source == 'video' and state.video_name != 'No video found':
+                    if cap:
+                        try:
+                            cap.release()
+                        except:
+                            pass
+                    cap = VideoProcessor._open_cap(state.video_name)
+                elif state.source == 'camera':
+                    if cap:
+                        try:
+                            cap.release()
+                        except:
+                            pass
+                    if state.cam_connected and state.cam_ip:
+                        sep = '' if state.cam_stream.startswith('/') else '/'
+                        rtsp_url = f"rtsp://{state.cam_user}:{state.cam_pass}@{state.cam_ip}:{state.cam_port}{sep}{state.cam_stream}"
+                        cap = CameraReader(rtsp_url)
+                    else:
+                        cap = CameraReader(0)
+                        
                 state.trigger_restart = False
                 state.inner_count = 0
                 state.outer_count = 0
+                state.outer_phase_started = False
+                state.inner_ever_confirmed = [False, False, False]
+                state.inner_snapshot = [False, False, False]
+                state.cycle_completed_pending = False
+                state.cycle_active = False
+                state.cycle_elapsed = 0.0
+                state.cycle_is_completed = False
                 for p in state.plates: 
                     p['inner_ok'] = False
                     p['outer_ok'] = False
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
+                consecutive_failures = 0
                 
             if state.paused:
                 if getattr(self, 'last_frame', None) is not None:
@@ -226,12 +472,18 @@ class VideoProcessor:
 
             success, frame = cap.read()
             if not success:
-                consecutive_failures += 1
-                if state.source == 'video' and state.video_name != 'No video found' and consecutive_failures < 5:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                if state.source == 'video' and state.video_name != 'No video found':
+                    if cap:
+                        try:
+                            cap.release()
+                        except:
+                            pass
+                    cap = VideoProcessor._open_cap(state.video_name)
+                    consecutive_failures = 0
                     time.sleep(0.05)
                     continue
                 else:
+                    consecutive_failures += 1
                     frame = np.zeros((480, 640, 3), dtype=np.uint8)
                     msg = "Camera disconnected or video file invalid"
                     cv2.putText(frame, msg, (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -244,40 +496,108 @@ class VideoProcessor:
             else:
                 consecutive_failures = 0
             
-            if not state.model_loaded:
+            if not getattr(state, 'sealing_model_loaded', False) and not getattr(state, 'person_model_loaded', False):
                 load_model()
 
-            if state.model_loaded and state.model:
+            if getattr(state, 'sealing_model_loaded', False) or getattr(state, 'person_model_loaded', False):
                 # Provide the freshest frame to the inference thread
                 self.latest_frame_for_yolo = frame.copy()
 
                 boxes = getattr(self, '_last_boxes', None)
                 classes = getattr(self, '_last_classes', {})
+                boxes_person = getattr(self, '_last_boxes_person', None)
+                classes_person = getattr(self, '_last_classes_person', {})
 
-                # Always display latest annotated frame using the most recent boxes
-                if boxes is not None and len(boxes) > 0:
+                # Proportional font scaling
+                h, w = frame.shape[:2]
+                base_w = 1280.0
+                scale_factor = w / base_w
+                font_scale = max(0.5, 1.2 * scale_factor)
+                thickness = max(1, int(3 * scale_factor))
+
+                # Always display latest annotated frame using the most recent boxes (sealing)
+                if state.show_annotations and boxes is not None and len(boxes) > 0:
                     for i, c in enumerate(boxes.cls):
                         cls_name = classes[int(c)].lower()
                         coords = boxes.xyxy[i].tolist()
                         x1, y1, x2, y2 = [int(v) for v in coords]
                         # Cyan for outer, Blue for inner
                         color = (255, 255, 0) if 'outer' in cls_name else (255, 0, 0)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)  # Very thick box for visibility
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, max(1, int(5 * scale_factor)))
                         
                         # Draw label background
                         label = f"{cls_name} {boxes.conf[i]:.2f}"
                         font = cv2.FONT_HERSHEY_SIMPLEX
-                        font_scale = 1.8
-                        thickness = 4
                         (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
                         
                         # Ensure label doesn't go off the top of the screen
-                        y_bg = max(y1, th + 20)
-                        cv2.rectangle(frame, (x1, y_bg - th - 20), (x1 + tw + 15, y_bg), color, -1)
+                        y_bg = max(y1, th + int(15 * scale_factor))
+                        cv2.rectangle(frame, (x1, y_bg - th - int(15 * scale_factor)), (x1 + tw + int(10 * scale_factor), y_bg), color, -1)
                         
                         # Draw text over background (black on cyan, white on blue)
                         text_color = (0, 0, 0) if 'outer' in cls_name else (255, 255, 255)
-                        cv2.putText(frame, label, (x1 + 8, y_bg - 10), font, font_scale, text_color, thickness)
+                        cv2.putText(frame, label, (x1 + int(5 * scale_factor), y_bg - int(5 * scale_factor)), font, font_scale, text_color, thickness)
+
+                # Draw person detections (temporarily disabled)
+                state.person_count = 0
+                state.person_detected = False
+
+                # ── Draw P1 / P2 / P3 individual boxes around the cylinders ────────
+                # Defined using the physical center points and dimensions of the cylinders:
+                # P1 center ~26%, P2 center ~52%, P3 center ~78% of frame width.
+                box_y1 = int(h * 0.63)
+                box_y2 = int(h * 0.80)
+                
+                # Boxes are positioned to align perfectly with the physical cylinders and gaps
+                plates_regions = [
+                    (int(w * 0.25), int(w * 0.47)),  # P1
+                    (int(w * 0.48), int(w * 0.685)), # P2
+                    (int(w * 0.695), int(w * 0.87))  # P3
+                ]
+                
+                font_z = cv2.FONT_HERSHEY_SIMPLEX
+                fscale_z = max(0.4, 0.7 * scale_factor)
+                fthick_z = max(1, int(2 * scale_factor))
+
+                for zi, (zx1, zx2) in enumerate(plates_regions):
+                    plate = state.plates[zi]
+                    label_z = f"P{zi + 1}"
+
+                    # Choose colour based on current ring status
+                    if not state.cycle_active:
+                        col = (160, 160, 160)       # grey — idle
+                    elif plate['inner_ok'] and plate['outer_ok']:
+                        col = (0, 200, 60)           # green — both rings confirmed
+                    elif plate['inner_ok']:
+                        col = (0, 165, 255)          # orange — inner only
+                    else:
+                        col = (0, 0, 220)            # red — missing
+
+                    # Semi-transparent fill inside the individual cylinder box
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (zx1, box_y1), (zx2, box_y2), col, -1)
+                    cv2.addWeighted(overlay, 0.10, frame, 0.90, 0, frame)
+
+                    # Draw the individual border
+                    cv2.rectangle(frame, (zx1, box_y1), (zx2, box_y2), col,
+                                  max(2, int(3 * scale_factor)))
+
+                    # Label background + text centered on top of each box
+                    (tw_z, th_z), _ = cv2.getTextSize(label_z, font_z, fscale_z, fthick_z)
+                    lx = zx1 + (zx2 - zx1 - tw_z) // 2      # horizontally centred
+                    ly = box_y1 + th_z + int(6 * scale_factor)
+                    cv2.rectangle(frame, (lx - 4, ly - th_z - 4), (lx + tw_z + 4, ly + 4), col, -1)
+                    cv2.putText(frame, label_z, (lx, ly), font_z, fscale_z, (255, 255, 255), fthick_z)
+
+                    # Ring status sub-label (tiny)
+                    inner_sym = "I:OK" if plate['inner_ok'] else "I:--"
+                    outer_sym = "O:OK" if plate['outer_ok'] else "O:--"
+                    sub_label = f"{inner_sym}  {outer_sym}"
+                    fs_sub = max(0.28, 0.45 * scale_factor)
+                    (sw, sh), _ = cv2.getTextSize(sub_label, font_z, fs_sub, 1)
+                    sx = zx1 + (zx2 - zx1 - sw) // 2
+                    sy = ly + sh + int(10 * scale_factor)
+                    cv2.putText(frame, sub_label, (sx, sy), font_z, fs_sub, col, 1)
 
                 # Count detections in this frame (for auto-reset logic)
                 inner_c = 0
@@ -293,11 +613,109 @@ class VideoProcessor:
                 # === BATCH COMPLETE OR ABORTED: Watch for auto-reset ===
                 if inner_c == 0 and outer_c == 0:
                     state.empty_frames += 1
+                    if state.cycle_active and not state.cycle_is_completed:
+                        state.cycle_elapsed = time.time() - state.cycle_start_time
                 else:
                     state.empty_frames = 0
+                    if not state.cycle_active:
+                        # Only start a new cycle if it's not a finished plate (e.g. outer rings < 2)
+                        if outer_c < 2:
+                            state.cycle_active = True
+                            state.cycle_start_time = time.time()
+                            state.cycle_start_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                            state.cycle_is_completed = False
+                            state.cycle_logged = False
+                            state.cycle_elapsed = 0.0
+                    elif not state.cycle_is_completed:
+                        state.cycle_elapsed = time.time() - state.cycle_start_time
+                        
+                        # Immediate completion logging:
+                        if state.inner_count == 3 and state.outer_count == 3:
+                            if not state.cycle_logged:
+                                state.cycle_is_completed = True
+                                state.cycle_end_time = time.time()
+                                state.cycle_end_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                                state.cycle_elapsed = state.cycle_end_time - state.cycle_start_time
+                                check_date_transition()
+                                state.cycle_count += 1
+                                
+                                # Gather plate counts
+                                counts_list = []
+                                total_rings = 0
+                                for p in state.plates:
+                                    inner_val = 1 if p['inner_ok'] else 0
+                                    outer_val = 1 if p['outer_ok'] else 0
+                                    total_rings += (inner_val + outer_val)
+                                    counts_list.append(f"{p['id']}: Inner {inner_val}, Outer {outer_val}")
+                                total_missing = 6 - total_rings
+                                plate_counts_str = f"Total Rings: {total_rings} | Total Missing: {total_missing} | " + " | ".join(counts_list)
+
+                                save_cycle_count_with_detail(
+                                    state.cycle_count,
+                                    state.cycle_start_timestamp,
+                                    state.cycle_end_timestamp,
+                                    state.cycle_elapsed,
+                                    is_ok=True,
+                                    details=plate_counts_str
+                                )
+                                state.cycle_logged = True
+                                print(f"Cycle completed successfully! Total today: {state.cycle_count}")
                     
-                # After 2 seconds of empty view (60 frames), reset for next batch
-                if state.empty_frames > 60:
+                # Reset cycle when the template is empty.
+                # We use 75 frames (2.5 seconds) of empty view to reset.
+                if state.empty_frames > 75:
+                    # If a cycle was started but never completed and not logged, log it as Not OK:
+                    if state.cycle_active and not state.cycle_logged:
+                        if state.inner_count > 0 or state.outer_count > 0:
+                            check_date_transition()
+                            state.cycle_count += 1
+                            end_time = time.time() - 2.5
+                            duration = max(0.1, end_time - state.cycle_start_time)
+                            end_ts = datetime.datetime.fromtimestamp(end_time).strftime("%H:%M:%S")
+                            
+                            # Gather plate counts
+                            counts_list = []
+                            total_rings = 0
+                            for p in state.plates:
+                                inner_val = 1 if p['inner_ok'] else 0
+                                outer_val = 1 if p['outer_ok'] else 0
+                                total_rings += (inner_val + outer_val)
+                                counts_list.append(f"{p['id']}: Inner {inner_val}, Outer {outer_val}")
+                            total_missing = 6 - total_rings
+                            plate_counts_str = f"Total Rings: {total_rings} | Total Missing: {total_missing} | " + " | ".join(counts_list)
+
+                            # Gather missing info separately
+                            missing_list = []
+                            for p in state.plates:
+                                if not p['inner_ok']:
+                                    missing_list.append(f"{p['id']} Inner missing")
+                                if not p['outer_ok']:
+                                    missing_list.append(f"{p['id']} Outer missing")
+                            
+                            missing_info = None
+                            if missing_list:
+                                missing_info = f"Missing: {', '.join(missing_list)}"
+
+                            details_str = plate_counts_str
+                            if missing_info:
+                                details_str += f" | {missing_info}"
+
+                            save_cycle_count_with_detail(
+                                state.cycle_count,
+                                state.cycle_start_timestamp,
+                                end_ts,
+                                duration,
+                                is_ok=False,
+                                details=details_str
+                            )
+                            print(f"Cycle logged as Not OK! Total today: {state.cycle_count}")
+                    
+                    # Reset all variables for next cycle
+                    state.cycle_active = False
+                    state.cycle_elapsed = 0.0
+                    state.cycle_is_completed = False
+                    state.cycle_logged = False
+                    
                     for p in state.plates:
                         p['inner_ok'] = False
                         p['outer_ok'] = False
@@ -306,50 +724,56 @@ class VideoProcessor:
                         pf['outer'] = 0
                     state.inner_count = 0
                     state.outer_count = 0
+                    state.outer_phase_started = False
+                    state.inner_ever_confirmed = [False, False, False]
+                    state.inner_snapshot = [False, False, False]
                     state.empty_frames = 0
 
-                # === BATCH IN PROGRESS: Update per-plate state ===
-                elif boxes is not None and len(boxes) > 0:
+                # === ALWAYS: Update per-plate state — simple accumulate-only latches ===
+                # Inner and outer are INDEPENDENT. Once confirmed, each stays confirmed
+                # until the cycle resets. No phase gating needed.
+                else:
                     width = frame.shape[1]
                     outer_status = [False, False, False]
                     inner_status = [False, False, False]
-                    
-                    for i, c in enumerate(boxes.cls):
-                        cls_name = classes[int(c)].lower()
-                        coords = boxes.xyxy[i].tolist()
-                        center_x = (coords[0] + coords[2]) / 2
-                        rel_x = center_x / width
-                        
-                        if rel_x < 0.40:
-                            idx = 0
-                        elif rel_x < 0.60:
-                            idx = 1
-                        else:
-                            idx = 2
-                        
-                        if 'inner' in cls_name:
-                            inner_status[idx] = True
-                        elif 'outer' in cls_name:
-                            outer_status[idx] = True
-                                
+
+                    if boxes is not None and len(boxes) > 0:
+                        for i, c in enumerate(boxes.cls):
+                            cls_name = classes[int(c)].lower()
+                            coords = boxes.xyxy[i].tolist()
+                            center_x = (coords[0] + coords[2]) / 2
+                            rel_x = center_x / width
+
+                            if rel_x < 0.475:
+                                idx = 0
+                            elif rel_x < 0.69:
+                                idx = 1
+                            else:
+                                idx = 2
+
+                            if 'inner' in cls_name:
+                                inner_status[idx] = True
+                            elif 'outer' in cls_name:
+                                outer_status[idx] = True
+
                     for idx in range(3):
-                        if outer_status[idx]:
-                            state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 30)
-                        else:
-                            state.plate_frames[idx]['outer'] = max(0, state.plate_frames[idx]['outer'] - 1)
-                            
+                        # ── INNER ring: accumulate-only, one-way latch ──
+                        # Counter only goes up. Once inner_ok = True, it never clears
+                        # during this cycle — outer rings appearing cannot affect it.
                         if inner_status[idx]:
                             state.plate_frames[idx]['inner'] = min(state.plate_frames[idx]['inner'] + 1, 30)
-                        else:
-                            state.plate_frames[idx]['inner'] = max(0, state.plate_frames[idx]['inner'] - 1)
-                            
-                        # Lock only if detected consistently for 15 frames (~0.5s at 30fps)
-                        if state.plate_frames[idx]['outer'] >= 15:
-                            state.plates[idx]['outer_ok'] = True
-                        if state.plate_frames[idx]['inner'] >= 15:
-                            state.plates[idx]['inner_ok'] = True
-                            
-                    # Calculate global counts from locked per-plate status
+                            if state.plate_frames[idx]['inner'] >= 8:
+                                state.plates[idx]['inner_ok'] = True
+
+                        # ── OUTER ring: accumulate-only, one-way latch ──
+                        # Counter only goes up. Once outer_ok = True, it never clears
+                        # during this cycle — press covering rings cannot affect it.
+                        if outer_status[idx]:
+                            state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 30)
+                            if state.plate_frames[idx]['outer'] >= 15:
+                                state.plates[idx]['outer_ok'] = True
+
+                    # Live counts always reflect current state
                     state.inner_count = sum(1 for p in state.plates if p['inner_ok'])
                     state.outer_count = sum(1 for p in state.plates if p['outer_ok'])
             else:
@@ -387,6 +811,7 @@ def get_frame():
 
 @app.route('/')
 def index():
+    check_date_transition()
     # Step 1 → inner rings being placed
     # Step 2 → all inner done, outer rings being placed
     # Step 3 → BOTH inner AND outer all placed (true complete)
@@ -401,6 +826,7 @@ def index():
     missing_inner = 3 - state.inner_count
     missing_outer = 3 - state.outer_count
 
+    ok_count, notok_count = get_today_stats()
     return render_template('index.html',
                            source=state.source,
                            video_name=state.video_name,
@@ -417,7 +843,17 @@ def index():
                            cam_port=state.cam_port,
                            cam_user=state.cam_user,
                            cam_stream=state.cam_stream,
-                           cam_connected=state.cam_connected)
+                           cam_connected=state.cam_connected,
+                           person_detected=state.person_detected,
+                           person_count=state.person_count,
+                           show_annotations=state.show_annotations,
+                           cycle_count=state.cycle_count,
+                           current_cycle_date=state.current_cycle_date,
+                           cycle_active=state.cycle_active,
+                           cycle_elapsed=state.cycle_elapsed,
+                           cycle_is_completed=state.cycle_is_completed,
+                           ok_count=ok_count,
+                           notok_count=notok_count)
 
 @app.route('/video_feed')
 def video_feed():
@@ -428,6 +864,7 @@ from flask import jsonify
 @app.route('/status')
 def status():
     """Lightweight JSON endpoint for sidebar live-update (avoids full page re-render)."""
+    check_date_transition()
     inner_count = state.inner_count
     outer_count = state.outer_count
 
@@ -441,6 +878,7 @@ def status():
     missing_inner = 3 - inner_count
     missing_outer = 3 - outer_count
 
+    ok_count, notok_count = get_today_stats()
     return jsonify(
         inner_count=inner_count,
         outer_count=outer_count,
@@ -450,6 +888,16 @@ def status():
         missing_outer=missing_outer,
         plates=state.plates,
         paused=state.paused,
+        person_detected=state.person_detected,
+        person_count=state.person_count,
+        show_annotations=state.show_annotations,
+        cycle_count=state.cycle_count,
+        current_cycle_date=state.current_cycle_date,
+        cycle_active=state.cycle_active,
+        cycle_elapsed=state.cycle_elapsed,
+        cycle_is_completed=state.cycle_is_completed,
+        ok_count=ok_count,
+        notok_count=notok_count,
     )
 
 @app.route('/set_source/<src>')
@@ -536,13 +984,112 @@ def stop():
 def restart():
     state.trigger_restart = True
     state.paused = False
+    state.cycle_completed_pending = False
+    return redirect(url_for('index'))
+
+@app.route('/reset_cycle')
+def reset_cycle():
+    state.cycle_count = 0
+    state.cycle_active = False
+    state.cycle_elapsed = 0.0
+    state.cycle_is_completed = False
+    state.cycle_completed_pending = False
+    save_cycle_count(0)   # removes today's block from the file
     return redirect(url_for('index'))
 
 @app.route('/set_threshold')
 def set_threshold():
-    val = request.args.get('val', default=3, type=int)
+    val = request.args.get('val', default=6.0, type=float)
     state.threshold = val
     return redirect(url_for('index'))
+
+@app.route('/toggle_annotations')
+def toggle_annotations():
+    state.show_annotations = not state.show_annotations
+    return jsonify(show_annotations=state.show_annotations)
+
+def get_today_stats():
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+    ok_count = 0
+    notok_count = 0
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+            cur_cat = None
+            for line in raw:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if _is_date_header(stripped):
+                    cur_cat = None
+                elif stripped.startswith('OK:'):
+                    cur_cat = 'ok'
+                elif stripped.startswith('Not OK:'):
+                    cur_cat = 'notok'
+                elif stripped.startswith('- Cycle'):
+                    cat = cur_cat if cur_cat else 'ok'
+                    if cat == 'ok':
+                        ok_count += 1
+                    else:
+                        notok_count += 1
+        except Exception as e:
+            print(f"Error reading stats: {e}")
+    return ok_count, notok_count
+
+@app.route('/today_log')
+def today_log():
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+    
+    ok_list = []
+    notok_list = []
+    
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+            cur_cat = None
+            for line in raw:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if _is_date_header(stripped):
+                    cur_cat = None
+                elif stripped.startswith('OK:'):
+                    cur_cat = 'ok'
+                elif stripped.startswith('Not OK:'):
+                    cur_cat = 'notok'
+                elif stripped.startswith('- Cycle'):
+                    cat = cur_cat if cur_cat else 'ok'
+                    if cat == 'ok':
+                        ok_list.append(stripped)
+                    else:
+                        notok_list.append(stripped)
+        except Exception as e:
+            print(f"Error reading today's log: {e}")
+            
+    return jsonify(
+        date=current_date,
+        ok=ok_list,
+        notok=notok_list,
+        total=len(ok_list) + len(notok_list)
+    )
+
+from flask import send_file
+
+@app.route('/download_log')
+def download_log():
+    current_date = get_current_date_str()
+    file_path = get_log_file_path(current_date)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True, download_name=f"assembly_log_{current_date}.txt")
+    else:
+        # Return empty text file if doesn't exist
+        from io import BytesIO
+        mem = BytesIO(b"No logs recorded for today yet.")
+        return send_file(mem, as_attachment=True, download_name=f"assembly_log_{current_date}.txt", mimetype='text/plain')
 
 if __name__ == '__main__':
     # Start the Flask app

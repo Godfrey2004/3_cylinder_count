@@ -108,9 +108,10 @@
                 <div class="section">
                     <h3>EDGE THRESHOLD</h3>
                     <form action="/set_threshold" method="get" class="slider-form">
-                        <input type="range" name="val" min="1" max="10" value="{{ threshold }}"
+                        <input type="range" name="val" min="1" max="10" step="0.5" value="{{ threshold }}"
+                            oninput="document.getElementById('thresh-display').textContent=parseFloat(this.value).toFixed(1)"
                             onchange="this.form.submit()">
-                        <span class="slider-val">{{ threshold }}</span>
+                        <span class="slider-val" id="thresh-display">{{ '%.1f'|format(threshold) }}</span>
                     </form>
                     <p class="help-text">Lower = more sensitive</p>
                 </div>
@@ -251,29 +252,140 @@
                     </div>
                 </div>
 
+                <h4 style="margin: 12px 0 6px 0; font-size: 11px; letter-spacing: 0.05em; color: #7f8c8d; text-transform: uppercase; font-weight: 700;">
+                    CYCLE COUNT
+                </h4>
                 <div class="cycle-stats"
-                    style="margin-top: 12px; background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 2px;">
-                    <h4
-                        style="margin: 0; font-size: 11px; letter-spacing: 0.08em; color: #a0c4ff; text-transform: uppercase; font-weight: 700;">
-                        DAILY PRODUCTION CYCLES</h4>
-                    <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 2px;">
-                        <span id="cycle-count-val"
-                            style="font-size: 28px; font-weight: 800; line-height: 1; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">{{
-                            cycle_count }}</span>
-                        <span style="font-size: 12px; color: #d0e1ff; font-weight: 500;">cycles completed</span>
+                    style="background: #0b4ea2; color: white; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; text-align: center;">
+                    <!-- Completed -->
+                    <div style="display: flex; flex-direction: column; align-items: center; flex: 1;">
+                        <span id="cycle-count-val" style="font-size: 26px; font-weight: 800; line-height: 1;">{{ cycle_count }}</span>
+                        <span style="font-size: 9px; font-weight: 700; color: #d0e1ff; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em;">Completed</span>
                     </div>
-                    <div id="cycle-timer-row"
-                        style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: #d0e1ff; font-weight: 500;">
-                        <span
-                            style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #8c8c8c; transition: all 0.3s;"
-                            id="timer-dot"></span>
-                        <span id="cycle-timer-label">Per Plate Time:</span>
-                        <span id="cycle-timer-val"
-                            style="font-family: monospace; font-weight: 700; font-size: 13px; color: #fff;">{{
-                            "%.1f"|format(cycle_elapsed) }}s</span>
+                    <!-- Divider -->
+                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.25);"></div>
+                    <!-- Cycle Timer -->
+                    <div style="display: flex; flex-direction: column; align-items: center; flex: 1.2;">
+                        <span id="cycle-timer-val" style="font-size: 24px; font-weight: 800; line-height: 1; font-family: monospace;">{{ "%.1f"|format(cycle_elapsed) }}s</span>
+                        <span id="cycle-timer-label" style="font-size: 9px; font-weight: 700; color: #d0e1ff; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em;">Cycle Timer</span>
                     </div>
-                    <div id="cycle-date-val" style="font-size: 10px; margin-top: 2px; color: #a0c4ff; opacity: 0.9;">
-                        Date: {{ current_cycle_date }}</div>
+                    <!-- Divider -->
+                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.25);"></div>
+                    <!-- OK / Not OK -->
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; flex: 1; font-size: 13px; font-weight: 700; line-height: 1.4; padding-right: 4px;">
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <span>OK:</span>
+                            <span id="ok-count-val" style="font-size: 14px;">{{ ok_count }}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 4px; color: #ff9f9f;">
+                            <span>Not OK:</span>
+                            <span id="notok-count-val" style="font-size: 14px;">{{ notok_count }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View Logs Button -->
+                <button id="view-log-btn" onclick="toggleLogPanel()" style="width: 100%; margin-top: 8px; padding: 10px; border-radius: 6px; border: 1.5px solid #dcdde1; background: #f5f6fa; font-weight: 700; color: #2c3e50; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s; font-size: 13px; user-select: none;">
+                    📋 View Today's Log
+                </button>
+
+                <!-- Live Summary Table -->
+                <div class="live-summary-card" style="margin-top: 12px; background: white; border: 1.5px solid #eceff1; border-radius: 8px; padding: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); text-align: left;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 11px; letter-spacing: 0.05em; color: #7f8c8d; text-transform: uppercase; font-weight: 700; display: flex; justify-content: space-between; align-items: center;">
+                        <span>📋 PLATE SUMMARY</span>
+                        {% set ns = namespace(total_placed=0) %}
+                        {% for p in plates %}
+                            {% if p.inner_ok %}{% set ns.total_placed = ns.total_placed + 1 %}{% endif %}
+                            {% if p.outer_ok %}{% set ns.total_placed = ns.total_placed + 1 %}{% endif %}
+                        {% endfor %}
+                        <span id="live-total-badge" style="background: #e3f2fd; color: #0b4ea2; padding: 2px 6px; border-radius: 12px; font-size: 10px; font-weight: 800;">Rings: {{ ns.total_placed }}/6</span>
+                    </h4>
+                    
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <div style="flex: 1; background: #e8f8f2; border: 1px solid #a3e2c9; border-radius: 6px; padding: 8px; text-align: center; color: #0b9050;">
+                            <div style="font-size: 18px; font-weight: 800;" id="live-placed-count">{{ ns.total_placed }}</div>
+                            <div style="font-size: 9px; font-weight: 700; text-transform: uppercase; opacity: 0.8;">Rings Placed</div>
+                        </div>
+                        <div style="flex: 1; background: #ffeef0; border: 1px solid #ffccd5; border-radius: 6px; padding: 8px; text-align: center; color: #c62828;">
+                            <div style="font-size: 18px; font-weight: 800;" id="live-missing-count">{{ 6 - ns.total_placed }}</div>
+                            <div style="font-size: 9px; font-weight: 700; text-transform: uppercase; opacity: 0.8;">Rings Missing</div>
+                        </div>
+                    </div>
+
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px; font-weight: 700; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid #eceff1; color: #7f8c8d; font-size: 10px; text-transform: uppercase;">
+                                <th style="padding: 6px 4px;">Cylinder</th>
+                                <th style="padding: 6px 4px; text-align: center;">Inner Ring</th>
+                                <th style="padding: 6px 4px; text-align: center;">Outer Ring</th>
+                                <th style="padding: 6px 4px; text-align: right;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in plates %}
+                            <tr {% if not loop.last %}style="border-bottom: 1px solid #f8f9fa;"{% endif %}>
+                                <td style="padding: 8px 4px; color: #2c3e50;">
+                                    {% if loop.index == 1 %}P1 (Left)
+                                    {% elif loop.index == 2 %}P2 (Middle)
+                                    {% else %}P3 (Right)
+                                    {% endif %}
+                                </td>
+                                <td style="padding: 8px 4px; text-align: center;" id="tbl-p{{ loop.index }}-inner">
+                                    {{ '✅' if p.inner_ok else '❌' }}
+                                </td>
+                                <td style="padding: 8px 4px; text-align: center;" id="tbl-p{{ loop.index }}-outer">
+                                    {{ '✅' if p.outer_ok else '❌' }}
+                                </td>
+                                <td style="padding: 8px 4px; text-align: right;" id="tbl-p{{ loop.index }}-status">
+                                    {% if p.inner_ok and p.outer_ok %}
+                                        <span style="color: #0b9050;">OK</span>
+                                    {% elif not p.inner_ok and not p.outer_ok %}
+                                        <span style="color: #c62828;">Missing</span>
+                                    {% else %}
+                                        <span style="color: #f39c12;">Incomplete</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Logs Panel -->
+                <div id="log-panel" style="display: none; margin-top: 12px; border-top: 1.5px solid #eceff1; padding-top: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 11px; font-weight: 700; color: #7f8c8d; text-transform: uppercase; letter-spacing: 0.05em;">TODAY'S LOG</span>
+                        <span id="log-date" style="font-size: 11px; font-weight: 700; color: #7f8c8d;">{{ current_cycle_date }}</span>
+                    </div>
+                    
+                    <!-- Filter checkbox -->
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #2e7d32;">
+                            <input type="checkbox" id="filter-ok" checked onchange="renderLogs()" style="cursor: pointer;">
+                            <label for="filter-ok" style="cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none;">
+                                <span>✅ OK (<span id="log-ok-count">{{ ok_count }}</span>)</span>
+                            </label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #c62828;">
+                            <input type="checkbox" id="filter-notok" checked onchange="renderLogs()" style="cursor: pointer;">
+                            <label for="filter-notok" style="cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none;">
+                                <span>❌ Not OK (<span id="log-notok-count">{{ notok_count }}</span>)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Scrollable Log Container -->
+                    <div id="log-list-container" style="max-height: 180px; overflow-y: auto; border: 1.5px solid #e0e0e0; border-radius: 6px; padding: 6px; background: #fafafa; display: flex; flex-direction: column; gap: 6px;">
+                        <!-- Dynamically filled with logs -->
+                    </div>
+
+                    <!-- Bottom stats and download -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; font-weight: 700; color: #546e7a; border-top: 1.5px solid #eceff1; padding-top: 8px;">
+                        <div>Total: <span id="bottom-total-count">{{ cycle_count }}</span> | OK: <span id="bottom-ok-count">{{ ok_count }}</span> | <span style="color: #c62828;">Not OK: <span id="bottom-notok-count">{{ notok_count }}</span></span></div>
+                        <a href="/download_log" style="color: #0b4ea2; text-decoration: none; display: flex; align-items: center; gap: 2px; font-weight: 700;" download>
+                            ⬇ Download
+                        </a>
+                    </div>
                 </div>
             </div>
 
@@ -357,6 +469,109 @@
             </div>
 
             <script>
+                // ── Logs Panel State ──────────────────────────────────────────
+                let todayLogsData = { ok: [], notok: [] };
+                let logPanelOpen = false;
+                let _prevCycleCountForLogs = -1;
+
+                function toggleLogPanel() {
+                    const panel = document.getElementById('log-panel');
+                    const btn = document.getElementById('view-log-btn');
+                    logPanelOpen = !logPanelOpen;
+                    if (logPanelOpen) {
+                        panel.style.display = 'block';
+                        btn.style.background = '#e1f5fe';
+                        btn.style.borderColor = '#0288d1';
+                        btn.style.color = '#0288d1';
+                        fetchLogs();
+                    } else {
+                        panel.style.display = 'none';
+                        btn.style.background = '#f5f6fa';
+                        btn.style.borderColor = '#dcdde1';
+                        btn.style.color = '#2c3e50';
+                    }
+                }
+
+                function fetchLogs() {
+                    fetch('/today_log')
+                        .then(r => r.json())
+                        .then(data => {
+                            todayLogsData = data;
+                            const logDateEl = document.getElementById('log-date');
+                            const logOkCountEl = document.getElementById('log-ok-count');
+                            const logNotokCountEl = document.getElementById('log-notok-count');
+                            const bottomOkCountEl = document.getElementById('bottom-ok-count');
+                            const bottomNotokCountEl = document.getElementById('bottom-notok-count');
+                            const bottomTotalCountEl = document.getElementById('bottom-total-count');
+
+                            if (logDateEl) logDateEl.textContent = data.date;
+                            if (logOkCountEl) logOkCountEl.textContent = data.ok.length;
+                            if (logNotokCountEl) logNotokCountEl.textContent = data.notok.length;
+                            if (bottomOkCountEl) bottomOkCountEl.textContent = data.ok.length;
+                            if (bottomNotokCountEl) bottomNotokCountEl.textContent = data.notok.length;
+                            if (bottomTotalCountEl) bottomTotalCountEl.textContent = data.total;
+                            renderLogs();
+                        })
+                        .catch(err => console.error("Error fetching logs:", err));
+                }
+
+                function renderLogs() {
+                    const container = document.getElementById('log-list-container');
+                    if (!container) return;
+                    container.innerHTML = '';
+
+                    const showOk = document.getElementById('filter-ok').checked;
+                    const showNotOk = document.getElementById('filter-notok').checked;
+
+                    let list = [];
+                    if (showOk) {
+                        todayLogsData.ok.forEach(item => {
+                            list.push({ text: item, ok: true });
+                        });
+                    }
+                    if (showNotOk) {
+                        todayLogsData.notok.forEach(item => {
+                            list.push({ text: item, ok: false });
+                        });
+                    }
+
+                    const getCycleNum = (s) => {
+                        const match = s.match(/- Cycle (\d+):/);
+                        return match ? parseInt(match[1], 10) : 0;
+                    };
+                    list.sort((a, b) => getCycleNum(a.text) - getCycleNum(b.text));
+
+                    if (list.length === 0) {
+                        container.innerHTML = '<div style="text-align:center;color:#95a5a6;font-size:12px;padding:12px;">No logs to display</div>';
+                        return;
+                    }
+
+                    list.forEach(item => {
+                        const div = document.createElement('div');
+                        let displayText = item.text;
+                        if (displayText.startsWith('- ')) {
+                            displayText = displayText.substring(2);
+                        }
+                        
+                        div.textContent = displayText;
+                        div.style.padding = '8px 10px';
+                        div.style.borderRadius = '6px';
+                        div.style.fontSize = '12px';
+                        div.style.fontWeight = '700';
+                        
+                        if (item.ok) {
+                            div.style.border = '1px solid #a3e2c9';
+                            div.style.background = '#e8f8f2';
+                            div.style.color = '#0b9050';
+                        } else {
+                            div.style.border = '1px solid #ffccd5';
+                            div.style.background = '#ffeef0';
+                            div.style.color = '#c62828';
+                        }
+                        container.appendChild(div);
+                    });
+                }
+
                 // ── Beep Alert System ───────────────────────────────────────────
                 let beepOn = true;
                 let _actx = null;
@@ -473,7 +688,7 @@
                     } else {
                         pill.style.background = '#f5f7fa';
                         pill.style.borderColor = '#ccc';
-                        icon.textContent = '🙈';
+                        icon.textContent = '👁️';
                         lbl.textContent = 'HIDE';
                         lbl.style.color = '#9ca3af';
                         track.style.background = '#dde2ea';
@@ -560,14 +775,44 @@
                     if (outerSub) outerSub.textContent = `${oc} of 3 placed`;
                     if (outerBadge) outerBadge.textContent = `${oc}/3 ${oc === 3 ? 'OK' : 'MISSING'}`;
 
-                    // ─ Per-plate cubes ─────────────────────────────────
+                    // ─ Per-plate cubes & summary table ─────────────────
                     if (d.plates) {
+                        let totalPlaced = 0;
                         d.plates.forEach((p, i) => {
                             const ci = document.getElementById(`cube-${i}-inner`);
                             const co = document.getElementById(`cube-${i}-outer`);
                             if (ci) { ci.textContent = p.inner_ok ? '✓ INNER' : '✕ INNER'; ci.className = 'status-cube ' + (p.inner_ok ? 'ok' : 'missing'); }
                             if (co) { co.textContent = p.outer_ok ? '✓ OUTER' : '✕ OUTER'; co.className = 'status-cube ' + (p.outer_ok ? 'ok' : 'missing'); }
+                            
+                            if (p.inner_ok) totalPlaced++;
+                            if (p.outer_ok) totalPlaced++;
+                            
+                            const innerCell = document.getElementById(`tbl-p${i+1}-inner`);
+                            const outerCell = document.getElementById(`tbl-p${i+1}-outer`);
+                            const statusCell = document.getElementById(`tbl-p${i+1}-status`);
+                            
+                            if (innerCell) innerCell.innerHTML = p.inner_ok ? '✅' : '❌';
+                            if (outerCell) outerCell.innerHTML = p.outer_ok ? '✅' : '❌';
+                            
+                            if (statusCell) {
+                                if (p.inner_ok && p.outer_ok) {
+                                    statusCell.innerHTML = '<span style="color: #0b9050;">OK</span>';
+                                } else if (!p.inner_ok && !p.outer_ok) {
+                                    statusCell.innerHTML = '<span style="color: #c62828;">Missing</span>';
+                                } else {
+                                    statusCell.innerHTML = '<span style="color: #f39c12;">Incomplete</span>';
+                                }
+                            }
                         });
+                        
+                        const totalMissing = 6 - totalPlaced;
+                        const badge = document.getElementById('live-total-badge');
+                        const placedEl = document.getElementById('live-placed-count');
+                        const missingEl = document.getElementById('live-missing-count');
+                        
+                        if (badge) badge.textContent = `Rings: ${totalPlaced}/6`;
+                        if (placedEl) placedEl.textContent = totalPlaced;
+                        if (missingEl) missingEl.textContent = totalMissing;
                     }
 
                     // ─ Detection counts ────────────────────────────────
@@ -585,9 +830,34 @@
                     if (vS) vS.textContent = `${step}/3`;
 
                     const cycleCount = document.getElementById('cycle-count-val');
-                    const cycleDate = document.getElementById('cycle-date-val');
+                    const okCountEl = document.getElementById('ok-count-val');
+                    const notokCountEl = document.getElementById('notok-count-val');
+                    
+                    const logDateEl = document.getElementById('log-date');
+                    const logOkCountEl = document.getElementById('log-ok-count');
+                    const logNotokCountEl = document.getElementById('log-notok-count');
+                    const bottomOkCountEl = document.getElementById('bottom-ok-count');
+                    const bottomNotokCountEl = document.getElementById('bottom-notok-count');
+                    const bottomTotalCountEl = document.getElementById('bottom-total-count');
+
                     if (cycleCount && d.cycle_count !== undefined) cycleCount.textContent = d.cycle_count;
-                    if (cycleDate && d.current_cycle_date !== undefined) cycleDate.textContent = `Date: ${d.current_cycle_date}`;
+                    if (okCountEl && d.ok_count !== undefined) okCountEl.textContent = d.ok_count;
+                    if (notokCountEl && d.notok_count !== undefined) notokCountEl.textContent = d.notok_count;
+                    
+                    if (logDateEl && d.current_cycle_date !== undefined) logDateEl.textContent = d.current_cycle_date;
+                    if (logOkCountEl && d.ok_count !== undefined) logOkCountEl.textContent = d.ok_count;
+                    if (logNotokCountEl && d.notok_count !== undefined) logNotokCountEl.textContent = d.notok_count;
+                    if (bottomOkCountEl && d.ok_count !== undefined) bottomOkCountEl.textContent = d.ok_count;
+                    if (bottomNotokCountEl && d.notok_count !== undefined) bottomNotokCountEl.textContent = d.notok_count;
+                    if (bottomTotalCountEl && d.cycle_count !== undefined) bottomTotalCountEl.textContent = d.cycle_count;
+
+                    // Automatically fetch logs when count changes and panel is open
+                    if (d.cycle_count !== undefined && d.cycle_count !== _prevCycleCountForLogs) {
+                        _prevCycleCountForLogs = d.cycle_count;
+                        if (logPanelOpen) {
+                            fetchLogs();
+                        }
+                    }
 
                     // Sidebar Timer
                     const timerVal = document.getElementById('cycle-timer-val');

@@ -1,34 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Assembly Vision Monitor</title>
     <link rel="stylesheet" href="/style.css">
 </head>
-<body data-auto-cam="{{ 'true' if (source == 'camera' and not cam_connected) else 'false' }}">
+
+<body data-auto-cam="{{ 'true' if (source == 'camera' and not cam_connected) else 'false' }}"
+    data-show-annotations="{{ 'true' if show_annotations else 'false' }}">
     <header class="top-header">
         <div class="logo-area">
             <h1>Assembly Vision Monitor</h1>
             <p>Vidana Consulting — AI Vision Solutions</p>
         </div>
-            <!-- Beep Alert Toggle Pill -->
-            <div id="beep-pill" onclick="toggleBeep()"
-                 title="Toggle missing-part beep alert"
-                 style="display:flex;align-items:center;gap:7px;padding:5px 13px 5px 9px;
+        <!-- Beep Alert Toggle Pill -->
+        <div id="beep-pill" onclick="toggleBeep()" title="Toggle missing-part beep alert" style="display:flex;align-items:center;gap:7px;padding:5px 13px 5px 9px;
                         border-radius:20px;border:1.5px solid #0b905060;background:#e2f7ee;
                         cursor:pointer;transition:all .2s;user-select:none;margin-left:8px;">
-                <span id="beep-icon" style="font-size:16px;">🔔</span>
-                <div style="display:flex;flex-direction:column;line-height:1.2;">
-                    <span style="font-size:8px;font-weight:700;color:#0b9050;letter-spacing:.06em;">BEEP ALERT</span>
-                    <span id="beep-lbl" style="font-size:11px;font-weight:800;color:#0b9050;">ON</span>
-                </div>
-                <div id="beep-track" style="width:30px;height:15px;border-radius:8px;background:#0b9050;
+            <span id="beep-icon" style="font-size:16px;">🔔</span>
+            <div style="display:flex;flex-direction:column;line-height:1.2;">
+                <span style="font-size:8px;font-weight:700;color:#0b9050;letter-spacing:.06em;">BEEP ALERT</span>
+                <span id="beep-lbl" style="font-size:11px;font-weight:800;color:#0b9050;">ON</span>
+            </div>
+            <div id="beep-track" style="width:30px;height:15px;border-radius:8px;background:#0b9050;
                         position:relative;margin-left:3px;transition:background .2s;flex-shrink:0;">
-                    <div id="beep-thumb" style="position:absolute;top:2px;left:17px;width:11px;height:11px;
+                <div id="beep-thumb" style="position:absolute;top:2px;left:17px;width:11px;height:11px;
                             border-radius:50%;background:#fff;transition:all .2s;
                             box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>
-                </div>
             </div>
+        </div>
         </div>
     </header>
 
@@ -41,58 +42,96 @@
             </div>
             <div class="sidebar-content">
                 <div class="section">
-                <h3>SOURCE</h3>
-                <div class="btn-group">
-                    <button type="button" class="btn {{ 'active' if source == 'camera' else '' }}" onclick="openCamModal()" id="btn-camera">📷 Camera</button>
-                    <a href="/set_source/video" class="btn {{ 'active' if source == 'video' else '' }}" id="btn-video">🎬 Video</a>
-                </div>
-                {% if source == 'camera' and cam_connected %}
-                <div class="cam-status-badge connected">🟢 IP Cam: {{ cam_ip }}</div>
-                {% elif source == 'camera' %}
-                <div class="cam-status-badge">⚪ Local Webcam</div>
-                {% endif %}
-                
-                {% if source == 'video' %}
-                <form action="/upload_video" method="post" enctype="multipart/form-data">
-                    <div class="upload-drop-zone">
-                        📁 Drop video or click to browse
-                        <input type="file" name="video_file" accept=".mp4,.avi,.mov,.mkv" required onchange="this.form.submit()">
+                    <h3>SOURCE</h3>
+                    <div class="btn-group">
+                        <button type="button" class="btn {{ 'active' if source == 'camera' else '' }}"
+                            onclick="openCamModal()" id="btn-camera">📷 Camera</button>
+                        <a href="/set_source/video" class="btn {{ 'active' if source == 'video' else '' }}"
+                            id="btn-video">🎬 Video</a>
                     </div>
-                </form>
-                {% endif %}
-
-                <div class="status-text">• {{ video_name }}</div>
-                
-                <a href="/stop" class="btn btn-danger stop-btn">◼ Stop</a>
-                <a href="/restart" class="btn btn-secondary restart-btn">↺ Restart</a>
-            </div>
-
-            <div class="section">
-                <h3>CONTROLS</h3>
-                <a href="/toggle_resume" class="btn btn-success resume-btn">
-                    {% if paused %}
-                        ▶ Resume
-                    {% else %}
-                        ⏸ Pause
+                    {% if source == 'camera' and cam_connected %}
+                    <div class="cam-status-badge connected">🟢 IP Cam: {{ cam_ip }}</div>
+                    {% elif source == 'camera' %}
+                    <div class="cam-status-badge">⚪ Local Webcam</div>
                     {% endif %}
-                </a>
-            </div>
-            
-            <div class="section">
-                <h3>EDGE THRESHOLD</h3>
-                <form action="/set_threshold" method="get" class="slider-form">
-                    <input type="range" name="val" min="1" max="10" value="{{ threshold }}" onchange="this.form.submit()">
-                    <span class="slider-val">{{ threshold }}</span>
-                </form>
-                <p class="help-text">Lower = more sensitive</p>
-            </div>
+
+                    {% if source == 'video' %}
+                    <form action="/upload_video" method="post" enctype="multipart/form-data">
+                        <div class="upload-drop-zone">
+                            📁 Drop video or click to browse
+                            <input type="file" name="video_file" accept=".mp4,.avi,.mov,.mkv" required
+                                onchange="this.form.submit()">
+                        </div>
+                    </form>
+                    {% endif %}
+
+                    <div class="status-text">• {{ video_name }}</div>
+
+                    <a href="/stop" class="btn btn-danger stop-btn">◼ Stop</a>
+                    <a href="/restart" class="btn btn-secondary restart-btn">↺ Restart</a>
+                </div>
+
+                <div class="section">
+                    <h3>CONTROLS</h3>
+                    <a href="/toggle_resume" class="btn btn-success resume-btn">
+                        {% if paused %}
+                        ▶ Resume
+                        {% else %}
+                        ⏸ Pause
+                        {% endif %}
+                    </a>
+                    <a href="/reset_cycle" class="btn btn-warning reset-cycle-btn" style="margin-top: 8px;">
+                        ↺ Reset Cycle
+                    </a>
+                </div>
+
+                <div class="section">
+                    <h3>VISUALS</h3>
+                    <div id="anno-pill" onclick="toggleAnnotations()" title="Toggle bounding boxes on video feed" style="display:flex;align-items:center;gap:7px;padding:8px 12px;
+                            border-radius:6px;border:1.5px solid #2980b960;background:#eef7fc;
+                            cursor:pointer;transition:all .2s;user-select:none;">
+                        <span id="anno-icon" style="font-size:16px;">👁️</span>
+                        <div style="display:flex;flex-direction:column;line-height:1.2;flex:1;">
+                            <span
+                                style="font-size:8px;font-weight:700;color:#2980b9;letter-spacing:.06em;">ANNOTATIONS</span>
+                            <span id="anno-lbl" style="font-size:12px;font-weight:800;color:#2980b9;">SHOW</span>
+                        </div>
+                        <div id="anno-track" style="width:30px;height:15px;border-radius:8px;background:#2980b9;
+                            position:relative;margin-left:3px;transition:background .2s;flex-shrink:0;">
+                            <div id="anno-thumb" style="position:absolute;top:2px;left:17px;width:11px;height:11px;
+                                border-radius:50%;background:#fff;transition:all .2s;
+                                box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>EDGE THRESHOLD</h3>
+                    <form action="/set_threshold" method="get" class="slider-form">
+                        <input type="range" name="val" min="1" max="10" step="0.5" value="{{ threshold }}"
+                            oninput="document.getElementById('thresh-display').textContent=parseFloat(this.value).toFixed(1)"
+                            onchange="this.form.submit()">
+                        <span class="slider-val" id="thresh-display">{{ '%.1f'|format(threshold) }}</span>
+                    </form>
+                    <p class="help-text">Lower = more sensitive</p>
+                </div>
             </div>
         </aside>
 
         <!-- Center Video Feed -->
         <main class="video-center">
-            <div class="video-header">
-                <span class="feed-label">LIVE FEED <span class="res">640×480</span></span>
+            <div class="video-header"
+                style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span class="feed-label" style="margin: 0;">LIVE FEED <span class="res">640×480</span></span>
+                    <div id="live-timer-badge"
+                        style="display: flex; align-items: center; gap: 6px; background: rgba(30, 60, 114, 0.1); border: 1px solid rgba(30, 60, 114, 0.2); padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 700; color: #1e3c72; transition: all 0.3s; opacity: 0.8;">
+                        <span id="live-timer-dot"
+                            style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #8c8c8c; transition: all 0.3s;"></span>
+                        <span id="live-timer-label">Per Plate Time:</span>
+                        <span id="live-timer-val" style="font-family: monospace; font-size: 14px;">0.0s</span>
+                    </div>
+                </div>
             </div>
             <div class="video-wrapper">
                 <img src="/video_feed" alt="Video Feed" class="video-stream">
@@ -102,49 +141,53 @@
         <!-- Right Sidebar -->
         <aside class="sidebar-right stats-body">
             <div class="stats-content">
-                
+
                 <div class="status-box {{ 'defect-box' if defect else '' }}" id="status-box">
                     <h3 class="status-title {{ 'status-defect-title' if defect else '' }}" id="status-title">
                         {% if defect %}
-                            ⚠ DEFECT DETECTED
+                        ⚠ DEFECT DETECTED
                         {% else %}
-                            STAGE {{ current_step }} —
-                            {% if current_step == 1 %}Inner rings: {{ inner_count }}/3 placed
-                            {% elif current_step == 2 %}Outer rings: {{ outer_count }}/3 placed
-                            {% else %}Complete
-                            {% endif %}
+                        STAGE {{ current_step }} —
+                        {% if current_step == 1 %}Inner rings: {{ inner_count }}/3 placed
+                        {% elif current_step == 2 %}Outer rings: {{ outer_count }}/3 placed
+                        {% else %}Complete
+                        {% endif %}
                         {% endif %}
                     </h3>
 
                     {% if defect %}
-                        <p class="status-red" id="status-desc">⚠ Inner ring missing: {{ missing_inner }} plate(s) — outer placed without inner!</p>
+                    <p class="status-red" id="status-desc">⚠ Inner ring missing: {{ missing_inner }} plate(s) — outer
+                        placed without inner!</p>
                     {% elif current_step == 1 %}
-                        {% if (3 - inner_count) > 0 %}
-                        <p class="status-red" id="status-desc">Inner ring missing: {{ 3 - inner_count }} plate(s)</p>
-                        {% else %}
-                        <p class="status-green" id="status-desc">All inner rings placed</p>
-                        {% endif %}
-                    {% elif current_step == 2 %}
-                        {% if (3 - outer_count) > 0 %}
-                        <p class="status-red" id="status-desc">Outer ring missing: {{ 3 - outer_count }} plate(s)</p>
-                        {% else %}
-                        <p class="status-green" id="status-desc">All outer rings placed</p>
-                        {% endif %}
+                    {% if (3 - inner_count) > 0 %}
+                    <p class="status-red" id="status-desc">Inner ring missing: {{ 3 - inner_count }} plate(s)</p>
                     {% else %}
-                        <p class="status-green" id="status-desc">✓ Assembly complete</p>
+                    <p class="status-green" id="status-desc">All inner rings placed</p>
+                    {% endif %}
+                    {% elif current_step == 2 %}
+                    {% if (3 - outer_count) > 0 %}
+                    <p class="status-red" id="status-desc">Outer ring missing: {{ 3 - outer_count }} plate(s)</p>
+                    {% else %}
+                    <p class="status-green" id="status-desc">All outer rings placed</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="status-green" id="status-desc">✓ Assembly complete</p>
                     {% endif %}
                     <div class="steps-container" id="steps-container">
-                        <div class="step-group {{ 'done' if current_step > 1 else ('active' if current_step == 1 else '') }}" id="step-1">
+                        <div class="step-group {{ 'done' if current_step > 1 else ('active' if current_step == 1 else '') }}"
+                            id="step-1">
                             <div class="step-dot"></div>
                             <div class="step-text">Inner</div>
                         </div>
                         <div class="step-line {{ 'done' if current_step > 1 else '' }}" id="step-line-1"></div>
-                        <div class="step-group {{ 'done' if current_step > 2 else ('active' if current_step == 2 else '') }}" id="step-2">
+                        <div class="step-group {{ 'done' if current_step > 2 else ('active' if current_step == 2 else '') }}"
+                            id="step-2">
                             <div class="step-dot"></div>
                             <div class="step-text">Outer</div>
                         </div>
                         <div class="step-line {{ 'done' if current_step > 2 else '' }}" id="step-line-2"></div>
-                        <div class="step-group {{ 'done' if current_step > 3 else ('active' if current_step == 3 else '') }}" id="step-3">
+                        <div class="step-group {{ 'done' if current_step > 3 else ('active' if current_step == 3 else '') }}"
+                            id="step-3">
                             <div class="step-dot"></div>
                             <div class="step-text">Done</div>
                         </div>
@@ -158,7 +201,8 @@
                             <span class="icon">⊚</span> Inner Rings
                             <div class="part-sub" id="inner-sub">{{ inner_count }} of 3 placed</div>
                         </div>
-                        <div class="part-badge" id="inner-badge">{{ inner_count }}/3 {{ 'OK' if inner_count == 3 else 'MISSING' }}</div>
+                        <div class="part-badge" id="inner-badge">{{ inner_count }}/3 {{ 'OK' if inner_count == 3 else
+                            'MISSING' }}</div>
                     </div>
 
                     <div class="part-card {{ 'ok' if outer_count == 3 else 'missing' }}" id="outer-card">
@@ -166,7 +210,8 @@
                             <span class="icon">◎</span> Outer Rings
                             <div class="part-sub" id="outer-sub">{{ outer_count }} of 3 placed</div>
                         </div>
-                        <div class="part-badge" id="outer-badge">{{ outer_count }}/3 {{ 'OK' if outer_count == 3 else 'MISSING' }}</div>
+                        <div class="part-badge" id="outer-badge">{{ outer_count }}/3 {{ 'OK' if outer_count == 3 else
+                            'MISSING' }}</div>
                     </div>
                 </div>
 
@@ -176,10 +221,12 @@
                         {% for p in plates %}
                         <div class="plate-cell" id="plate-cell-{{ loop.index0 }}">
                             <div class="plate-id">{{ p.id }}</div>
-                            <div class="status-cube {{ 'ok' if p.inner_ok else 'missing' }}" id="cube-{{ loop.index0 }}-inner">
+                            <div class="status-cube {{ 'ok' if p.inner_ok else 'missing' }}"
+                                id="cube-{{ loop.index0 }}-inner">
                                 {% if p.inner_ok %}✓ INNER{% else %}✕ INNER{% endif %}
                             </div>
-                            <div class="status-cube {{ 'ok' if p.outer_ok else 'missing' }}" id="cube-{{ loop.index0 }}-outer">
+                            <div class="status-cube {{ 'ok' if p.outer_ok else 'missing' }}"
+                                id="cube-{{ loop.index0 }}-outer">
                                 {% if p.outer_ok %}✓ OUTER{% else %}✕ OUTER{% endif %}
                             </div>
                         </div>
@@ -204,366 +251,663 @@
                         </div>
                     </div>
                 </div>
+
+                <h4 style="margin: 12px 0 6px 0; font-size: 11px; letter-spacing: 0.05em; color: #7f8c8d; text-transform: uppercase; font-weight: 700;">
+                    CYCLE COUNT
+                </h4>
+                <div class="cycle-stats"
+                    style="background: #0b4ea2; color: white; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; text-align: center;">
+                    <!-- Completed -->
+                    <div style="display: flex; flex-direction: column; align-items: center; flex: 1;">
+                        <span id="cycle-count-val" style="font-size: 26px; font-weight: 800; line-height: 1;">{{ cycle_count }}</span>
+                        <span style="font-size: 9px; font-weight: 700; color: #d0e1ff; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em;">Completed</span>
+                    </div>
+                    <!-- Divider -->
+                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.25);"></div>
+                    <!-- Cycle Timer -->
+                    <div style="display: flex; flex-direction: column; align-items: center; flex: 1.2;">
+                        <span id="cycle-timer-val" style="font-size: 24px; font-weight: 800; line-height: 1; font-family: monospace;">{{ "%.1f"|format(cycle_elapsed) }}s</span>
+                        <span id="cycle-timer-label" style="font-size: 9px; font-weight: 700; color: #d0e1ff; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em;">Cycle Timer</span>
+                    </div>
+                    <!-- Divider -->
+                    <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.25);"></div>
+                    <!-- OK / Not OK -->
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; flex: 1; font-size: 13px; font-weight: 700; line-height: 1.4; padding-right: 4px;">
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <span>OK:</span>
+                            <span id="ok-count-val" style="font-size: 14px;">{{ ok_count }}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 4px; color: #ff9f9f;">
+                            <span>Not OK:</span>
+                            <span id="notok-count-val" style="font-size: 14px;">{{ notok_count }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View Logs Button -->
+                <button id="view-log-btn" onclick="toggleLogPanel()" style="width: 100%; margin-top: 8px; padding: 10px; border-radius: 6px; border: 1.5px solid #dcdde1; background: #f5f6fa; font-weight: 700; color: #2c3e50; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s; font-size: 13px; user-select: none;">
+                    📋 View Today's Log
+                </button>
+
+                <!-- Logs Panel -->
+                <div id="log-panel" style="display: none; margin-top: 12px; border-top: 1.5px solid #eceff1; padding-top: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 11px; font-weight: 700; color: #7f8c8d; text-transform: uppercase; letter-spacing: 0.05em;">TODAY'S LOG</span>
+                        <span id="log-date" style="font-size: 11px; font-weight: 700; color: #7f8c8d;">{{ current_cycle_date }}</span>
+                    </div>
+                    
+                    <!-- Filter checkbox -->
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #2e7d32;">
+                            <input type="checkbox" id="filter-ok" checked onchange="renderLogs()" style="cursor: pointer;">
+                            <label for="filter-ok" style="cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none;">
+                                <span>✅ OK (<span id="log-ok-count">{{ ok_count }}</span>)</span>
+                            </label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #c62828;">
+                            <input type="checkbox" id="filter-notok" checked onchange="renderLogs()" style="cursor: pointer;">
+                            <label for="filter-notok" style="cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none;">
+                                <span>❌ Not OK (<span id="log-notok-count">{{ notok_count }}</span>)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Scrollable Log Container -->
+                    <div id="log-list-container" style="max-height: 180px; overflow-y: auto; border: 1.5px solid #e0e0e0; border-radius: 6px; padding: 6px; background: #fafafa; display: flex; flex-direction: column; gap: 6px;">
+                        <!-- Dynamically filled with logs -->
+                    </div>
+
+                    <!-- Bottom stats and download -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; font-weight: 700; color: #546e7a; border-top: 1.5px solid #eceff1; padding-top: 8px;">
+                        <div>Total: <span id="bottom-total-count">{{ cycle_count }}</span> | OK: <span id="bottom-ok-count">{{ ok_count }}</span> | <span style="color: #c62828;">Not OK: <span id="bottom-notok-count">{{ notok_count }}</span></span></div>
+                        <a href="/download_log" style="color: #0b4ea2; text-decoration: none; display: flex; align-items: center; gap: 2px; font-weight: 700;" download>
+                            ⬇ Download
+                        </a>
+                    </div>
+                </div>
             </div>
-            
+
             <!-- Simple script to reload page every 2 seconds ONLY IF not video feed? 
                  Actually, doing full page reload will interrupt the video stream.
                  To avoid JS entirely as requested, the page will be static unless refreshed manually.
                  If you want it to auto-refresh without interrupting the video, we MUST use a small script. -->
 
-<!-- ═══ IP CAMERA CREDENTIAL MODAL ═══ -->
-<div id="camModal" class="modal-overlay" onclick="closeCamModal(event)">
-    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <div class="modal-header">
-            <span class="modal-icon">📷</span>
-            <h2 id="modal-title">IP Camera Setup</h2>
-            <button class="modal-close" onclick="document.getElementById('camModal').classList.remove('open')" aria-label="Close">✕</button>
-        </div>
-        <p class="modal-subtitle">Enter your CP Plus (or any RTSP) camera credentials</p>
+            <!-- ═══ IP CAMERA CREDENTIAL MODAL ═══ -->
+            <div id="camModal" class="modal-overlay" onclick="closeCamModal(event)">
+                <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+                    <div class="modal-header">
+                        <span class="modal-icon">📷</span>
+                        <h2 id="modal-title">IP Camera Setup</h2>
+                        <button class="modal-close"
+                            onclick="document.getElementById('camModal').classList.remove('open')"
+                            aria-label="Close">✕</button>
+                    </div>
+                    <p class="modal-subtitle">Enter your CP Plus (or any RTSP) camera credentials</p>
 
-        <form action="/set_camera_creds" method="post" id="cam-form">
-            <div class="form-row-2">
-                <div class="form-group">
-                    <label for="cam_ip">Camera IP Address</label>
-                    <div class="input-row">
-                        <span class="input-icon">🌐</span>
-                        <input type="text" id="cam_ip" name="cam_ip" placeholder="e.g. 192.168.1.64" required
-                               value="{{ cam_ip }}" autocomplete="off">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="cam_port">Port</label>
-                    <div class="input-row">
-                        <span class="input-icon">🔌</span>
-                        <input type="text" id="cam_port" name="cam_port" placeholder="554"
-                               value="{{ cam_port if cam_port else '554' }}" autocomplete="off">
-                    </div>
+                    <form action="/set_camera_creds" method="post" id="cam-form">
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="cam_ip">Camera IP Address</label>
+                                <div class="input-row">
+                                    <span class="input-icon">🌐</span>
+                                    <input type="text" id="cam_ip" name="cam_ip" placeholder="e.g. 192.168.1.64"
+                                        required value="{{ cam_ip }}" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="cam_port">Port</label>
+                                <div class="input-row">
+                                    <span class="input-icon">🔌</span>
+                                    <input type="text" id="cam_port" name="cam_port" placeholder="554"
+                                        value="{{ cam_port if cam_port else '554' }}" autocomplete="off">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="cam_user">Username</label>
+                                <div class="input-row">
+                                    <span class="input-icon">👤</span>
+                                    <input type="text" id="cam_user" name="cam_user" placeholder="admin"
+                                        value="{{ cam_user if cam_user else 'admin' }}" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="cam_pass">Password</label>
+                                <div class="input-row">
+                                    <span class="input-icon">🔒</span>
+                                    <input type="password" id="cam_pass" name="cam_pass" placeholder="••••••••"
+                                        autocomplete="off">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cam_stream">Stream Path
+                                <span class="label-hint">Leave default for stream path</span>
+                            </label>
+                            <div class="input-row">
+                                <span class="input-icon">📡</span>
+                                <input type="text" id="cam_stream" name="cam_stream"
+                                    placeholder="/cam/realmonitor?channel=1&amp;subtype=0"
+                                    value="{{ cam_stream if cam_stream else '/cam/realmonitor?channel=1&subtype=0' }}"
+                                    autocomplete="off">
+                            </div>
+                            <p class="field-hint">Full RTSP URL: <code id="rtsp-preview">rtsp://…</code></p>
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button" class="modal-btn-cancel"
+                                onclick="document.getElementById('camModal').classList.remove('open')">Cancel</button>
+                            <button type="submit" class="modal-btn-connect" id="connect-btn">⚡ Connect Camera</button>
+                        </div>
+                    </form>
                 </div>
             </div>
 
-            <div class="form-row-2">
-                <div class="form-group">
-                    <label for="cam_user">Username</label>
-                    <div class="input-row">
-                        <span class="input-icon">👤</span>
-                        <input type="text" id="cam_user" name="cam_user" placeholder="admin"
-                               value="{{ cam_user if cam_user else 'admin' }}" autocomplete="off">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="cam_pass">Password</label>
-                    <div class="input-row">
-                        <span class="input-icon">🔒</span>
-                        <input type="password" id="cam_pass" name="cam_pass" placeholder="••••••••" autocomplete="off">
-                    </div>
-                </div>
-            </div>
+            <script>
+                // ── Logs Panel State ──────────────────────────────────────────
+                let todayLogsData = { ok: [], notok: [] };
+                let logPanelOpen = false;
+                let _prevCycleCountForLogs = -1;
 
-            <div class="form-group">
-                <label for="cam_stream">Stream Path
-                    <span class="label-hint">Leave default for stream path</span>
-                </label>
-                <div class="input-row">
-                    <span class="input-icon">📡</span>
-                    <input type="text" id="cam_stream" name="cam_stream"
-                           placeholder="/cam/realmonitor?channel=1&amp;subtype=0"
-                           value="{{ cam_stream if cam_stream else '/cam/realmonitor?channel=1&subtype=0' }}"
-                           autocomplete="off">
-                </div>
-                <p class="field-hint">Full RTSP URL: <code id="rtsp-preview">rtsp://…</code></p>
-            </div>
-
-            <div class="modal-footer">
-                <button type="button" class="modal-btn-cancel" onclick="document.getElementById('camModal').classList.remove('open')">Cancel</button>
-                <button type="submit" class="modal-btn-connect" id="connect-btn">⚡ Connect Camera</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<script>
-// ── Beep Alert System ───────────────────────────────────────────
-let beepOn = true;
-let _actx  = null;
-let _prevInnerOk = [null, null, null];  // track per-plate inner state
-let _prevOuterOk = [null, null, null];  // track per-plate outer state
-let _skippedInner= [false, false, false]; // track if a missing ring already triggered a skip warning
-let _skippedOuter= [false, false, false];
-let _prevDefect  = false;
-let _prevStep    = 0;                   // track step to detect final stage arrival
-let _prevGlobalInner = 0;
-let _prevGlobalOuter = 0;
-
-function initAudio() {
-    if (!_actx) _actx = new (window.AudioContext || window.webkitAudioContext)();
-}
-function _tone(freq, dur, type='square', vol=0.25) {
-    if (!_actx) return;
-    const o = _actx.createOscillator(), g = _actx.createGain();
-    o.connect(g); g.connect(_actx.destination);
-    o.type = type; o.frequency.value = freq;
-    g.gain.setValueAtTime(vol, _actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, _actx.currentTime + dur);
-    o.start(); o.stop(_actx.currentTime + dur);
-}
-// One beep per missing ring — play `count` beeps, 350ms apart
-function beepMissingN(count) {
-    if (!beepOn || count <= 0) return;
-    initAudio();
-    for (let i = 0; i < count; i++) {
-        setTimeout(() => {
-            _tone(660, 0.10, 'square', 0.30);
-            setTimeout(() => _tone(440, 0.14, 'square', 0.25), 120);
-        }, i * 350);
-    }
-}
-// beepMissing kept as alias for defect beep (single ring)
-function beepMissing() { beepMissingN(1); }
-// Toggle pill handler
-function toggleBeep() {
-    beepOn = !beepOn;
-    const pill  = document.getElementById('beep-pill');
-    const icon  = document.getElementById('beep-icon');
-    const lbl   = document.getElementById('beep-lbl');
-    const track = document.getElementById('beep-track');
-    const thumb = document.getElementById('beep-thumb');
-    if (beepOn) {
-        initAudio();
-        _tone(880, 0.06, 'sine', 0.15);   // tiny confirm tone
-        pill.style.background  = '#e2f7ee';
-        pill.style.borderColor = '#0b905060';
-        icon.textContent       = '🔔';
-        lbl.textContent        = 'ON';
-        lbl.style.color        = '#0b9050';
-        track.style.background = '#0b9050';
-        thumb.style.left       = '17px';
-    } else {
-        pill.style.background  = '#f5f7fa';
-        pill.style.borderColor = '#ccc';
-        icon.textContent       = '🔇';
-        lbl.textContent        = 'OFF';
-        lbl.style.color        = '#9ca3af';
-        track.style.background = '#dde2ea';
-        thumb.style.left       = '2px';
-    }
-}
-
-// ── Camera Modal ────────────────────────────────────────────────
-function openCamModal() {
-    document.getElementById('camModal').classList.add('open');
-    updateRtspPreview();
-}
-function closeCamModal(e) {
-    if (e.target === document.getElementById('camModal')) {
-        document.getElementById('camModal').classList.remove('open');
-    }
-}
-function updateRtspPreview() {
-    const ip     = document.getElementById('cam_ip').value     || '<ip>';
-    const port   = document.getElementById('cam_port').value   || '554';
-    const user   = document.getElementById('cam_user').value   || 'admin';
-    const pass   = document.getElementById('cam_pass').value   ? '••••' : '<pass>';
-    const stream = document.getElementById('cam_stream').value || '/cam/realmonitor?channel=1&subtype=0';
-    const sep    = stream.startsWith('/') ? '' : '/';
-    document.getElementById('rtsp-preview').textContent = `rtsp://${user}:${pass}@${ip}:${port}${sep}${stream}`;
-}
-['cam_ip','cam_port','cam_user','cam_pass','cam_stream'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', updateRtspPreview);
-});
-
-// Auto-open modal on first page load if source is camera but not yet connected
-if (document.body.dataset.autoCam === 'true') {
-    window.addEventListener('DOMContentLoaded', () => openCamModal());
-}
-
-// Replaces the old fetch('/') which re-rendered the entire HTML page
-// and competed with the video stream thread, causing stutter.
-function applyStatus(d) {
-    const ic = d.inner_count, oc = d.outer_count, step = d.current_step;
-
-    // ─ Status box ───────────────────────────────────────────
-    const box   = document.getElementById('status-box');
-    const title = document.getElementById('status-title');
-    const desc  = document.getElementById('status-desc');
-
-    if (box) {
-        box.className = 'status-box' + (d.defect ? ' defect-box' : '');
-    }
-    if (title) {
-        if (d.defect) {
-            title.textContent = '⚠ DEFECT DETECTED';
-            title.className = 'status-title status-defect-title';
-        } else {
-            const lbl = step === 1 ? `Inner rings: ${ic}/3 placed`
-                      : step === 2 ? `Outer rings: ${oc}/3 placed`
-                      : 'Complete';
-            title.textContent = `STAGE ${step} — ${lbl}`;
-            title.className = 'status-title';
-        }
-    }
-    if (desc) {
-        if (d.defect) {
-            desc.textContent = `⚠ Inner ring missing: ${d.missing_inner} plate(s) — outer placed without inner!`;
-            desc.className = 'status-red';
-        } else if (step === 1) {
-            desc.textContent = d.missing_inner > 0 ? `Inner ring missing: ${d.missing_inner} plate(s)` : 'All inner rings placed';
-            desc.className   = d.missing_inner > 0 ? 'status-red' : 'status-green';
-        } else if (step === 2) {
-            desc.textContent = d.missing_outer > 0 ? `Outer ring missing: ${d.missing_outer} plate(s)` : 'All outer rings placed';
-            desc.className   = d.missing_outer > 0 ? 'status-red' : 'status-green';
-        } else {
-            desc.textContent = '✓ Assembly complete';
-            desc.className = 'status-green';
-        }
-    }
-
-    // ─ Step dots ─────────────────────────────────────────
-    function sg(el, s) {
-        if (!el) return;
-        el.className = 'step-group' + (step > s ? ' done' : step === s ? ' active' : '');
-    }
-    function sl(el, s) {
-        if (!el) return;
-        el.className = 'step-line' + (step > s ? ' done' : '');
-    }
-    sg(document.getElementById('step-1'), 1);
-    sl(document.getElementById('step-line-1'), 1);
-    sg(document.getElementById('step-2'), 2);
-    sl(document.getElementById('step-line-2'), 2);
-    sg(document.getElementById('step-3'), 3);
-
-    // ─ Missing parts cards ───────────────────────────────
-    const innerCard  = document.getElementById('inner-card');
-    const innerSub   = document.getElementById('inner-sub');
-    const innerBadge = document.getElementById('inner-badge');
-    if (innerCard)  innerCard.className  = 'part-card ' + (ic === 3 ? 'ok' : 'missing');
-    if (innerSub)   innerSub.textContent = `${ic} of 3 placed`;
-    if (innerBadge) innerBadge.textContent = `${ic}/3 ${ic === 3 ? 'OK' : 'MISSING'}`;
-
-    const outerCard  = document.getElementById('outer-card');
-    const outerSub   = document.getElementById('outer-sub');
-    const outerBadge = document.getElementById('outer-badge');
-    if (outerCard)  outerCard.className  = 'part-card ' + (oc === 3 ? 'ok' : 'missing');
-    if (outerSub)   outerSub.textContent = `${oc} of 3 placed`;
-    if (outerBadge) outerBadge.textContent = `${oc}/3 ${oc === 3 ? 'OK' : 'MISSING'}`;
-
-    // ─ Per-plate cubes ─────────────────────────────────
-    if (d.plates) {
-        d.plates.forEach((p, i) => {
-            const ci = document.getElementById(`cube-${i}-inner`);
-            const co = document.getElementById(`cube-${i}-outer`);
-            if (ci) { ci.textContent = p.inner_ok ? '✓ INNER' : '✕ INNER'; ci.className = 'status-cube ' + (p.inner_ok ? 'ok' : 'missing'); }
-            if (co) { co.textContent = p.outer_ok ? '✓ OUTER' : '✕ OUTER'; co.className = 'status-cube ' + (p.outer_ok ? 'ok' : 'missing'); }
-        });
-    }
-
-    // ─ Detection counts ────────────────────────────────
-    const cntI = document.getElementById('cnt-inner');
-    const cntO = document.getElementById('cnt-outer');
-    const cntS = document.getElementById('cnt-stage');
-    const vI   = document.getElementById('cnt-inner-val');
-    const vO   = document.getElementById('cnt-outer-val');
-    const vS   = document.getElementById('cnt-stage-val');
-    if (cntI) cntI.className = 'count-item' + (ic === 3 ? ' count-full' : '');
-    if (cntO) cntO.className = 'count-item' + (oc === 3 ? ' count-full' : '');
-    if (cntS) cntS.className = 'count-item' + (step === 3 ? ' count-full' : '');
-    if (vI)   vI.textContent = `${ic}/3`;
-    if (vO)   vO.textContent = `${oc}/3`;
-    if (vS)   vS.textContent = `${step}/3`;
-}
-
-// Poll wrapper: sequence skip detection and incomplete removal detection
-const _origApply = applyStatus;
-applyStatus = function(d) {
-    _origApply(d);
-
-    let sequenceSkips = 0;
-    
-    // Detect if this is a global reset (assembly removed)
-    // If current counts are 0, but previous counts were > 0, it means it was removed.
-    let isReset = false;
-    if (d.inner_count === 0 && d.outer_count === 0 && (_prevGlobalInner > 0 || _prevGlobalOuter > 0)) {
-        isReset = true;
-    }
-
-    if (isReset) {
-        // Assembly was removed! Was it incomplete?
-        if (_prevGlobalInner < 3 || _prevGlobalOuter < 3) {
-            // It was incomplete! How many rings were missing in the stage they reached?
-            let missing = 0;
-            if (_prevStep === 1) missing = 3 - _prevGlobalInner;
-            else if (_prevStep === 2) missing = 3 - _prevGlobalOuter;
-            // (If _prevStep was 3, they completed it -> missing = 0, no beep!)
-            
-            if (missing > 0) beepMissingN(missing);
-        }
-        
-        // Update states without triggering individual plate removal beeps
-        if (d.plates) {
-            d.plates.forEach((p, i) => {
-                _prevInnerOk[i] = p.inner_ok;
-                _prevOuterOk[i] = p.outer_ok;
-                _skippedInner[i] = false;
-                _skippedOuter[i] = false;
-            });
-        }
-    } else {
-        // Normal frame, not a reset
-        if (d.plates) {
-            d.plates.forEach((p, i) => {
-                // 1. Sequence skip detection (placed out of order)
-                // If this ring was just placed, check if any rings to its left are still missing
-                if (_prevInnerOk[i] === false && p.inner_ok) {
-                    for (let j = 0; j < i; j++) {
-                        if (!d.plates[j].inner_ok && !_skippedInner[j]) {
-                            sequenceSkips++;
-                            _skippedInner[j] = true; // Mark as warned so we don't beep again for this specific miss
-                        }
+                function toggleLogPanel() {
+                    const panel = document.getElementById('log-panel');
+                    const btn = document.getElementById('view-log-btn');
+                    logPanelOpen = !logPanelOpen;
+                    if (logPanelOpen) {
+                        panel.style.display = 'block';
+                        btn.style.background = '#e1f5fe';
+                        btn.style.borderColor = '#0288d1';
+                        btn.style.color = '#0288d1';
+                        fetchLogs();
+                    } else {
+                        panel.style.display = 'none';
+                        btn.style.background = '#f5f6fa';
+                        btn.style.borderColor = '#dcdde1';
+                        btn.style.color = '#2c3e50';
                     }
                 }
-                if (_prevOuterOk[i] === false && p.outer_ok) {
-                    for (let j = 0; j < i; j++) {
-                        if (!d.plates[j].outer_ok && !_skippedOuter[j]) {
-                            sequenceSkips++;
-                            _skippedOuter[j] = true;
+
+                function fetchLogs() {
+                    fetch('/today_log')
+                        .then(r => r.json())
+                        .then(data => {
+                            todayLogsData = data;
+                            const logDateEl = document.getElementById('log-date');
+                            const logOkCountEl = document.getElementById('log-ok-count');
+                            const logNotokCountEl = document.getElementById('log-notok-count');
+                            const bottomOkCountEl = document.getElementById('bottom-ok-count');
+                            const bottomNotokCountEl = document.getElementById('bottom-notok-count');
+                            const bottomTotalCountEl = document.getElementById('bottom-total-count');
+
+                            if (logDateEl) logDateEl.textContent = data.date;
+                            if (logOkCountEl) logOkCountEl.textContent = data.ok.length;
+                            if (logNotokCountEl) logNotokCountEl.textContent = data.notok.length;
+                            if (bottomOkCountEl) bottomOkCountEl.textContent = data.ok.length;
+                            if (bottomNotokCountEl) bottomNotokCountEl.textContent = data.notok.length;
+                            if (bottomTotalCountEl) bottomTotalCountEl.textContent = data.total;
+                            renderLogs();
+                        })
+                        .catch(err => console.error("Error fetching logs:", err));
+                }
+
+                function renderLogs() {
+                    const container = document.getElementById('log-list-container');
+                    if (!container) return;
+                    container.innerHTML = '';
+
+                    const showOk = document.getElementById('filter-ok').checked;
+                    const showNotOk = document.getElementById('filter-notok').checked;
+
+                    let list = [];
+                    if (showOk) {
+                        todayLogsData.ok.forEach(item => {
+                            list.push({ text: item, ok: true });
+                        });
+                    }
+                    if (showNotOk) {
+                        todayLogsData.notok.forEach(item => {
+                            list.push({ text: item, ok: false });
+                        });
+                    }
+
+                    const getCycleNum = (s) => {
+                        const match = s.match(/- Cycle (\d+):/);
+                        return match ? parseInt(match[1], 10) : 0;
+                    };
+                    list.sort((a, b) => getCycleNum(a.text) - getCycleNum(b.text));
+
+                    if (list.length === 0) {
+                        container.innerHTML = '<div style="text-align:center;color:#95a5a6;font-size:12px;padding:12px;">No logs to display</div>';
+                        return;
+                    }
+
+                    list.forEach(item => {
+                        const div = document.createElement('div');
+                        let displayText = item.text;
+                        if (displayText.startsWith('- ')) {
+                            displayText = displayText.substring(2);
                         }
+                        
+                        div.textContent = displayText;
+                        div.style.padding = '8px 10px';
+                        div.style.borderRadius = '6px';
+                        div.style.fontSize = '12px';
+                        div.style.fontWeight = '700';
+                        
+                        if (item.ok) {
+                            div.style.border = '1px solid #a3e2c9';
+                            div.style.background = '#e8f8f2';
+                            div.style.color = '#0b9050';
+                        } else {
+                            div.style.border = '1px solid #ffccd5';
+                            div.style.background = '#ffeef0';
+                            div.style.color = '#c62828';
+                        }
+                        container.appendChild(div);
+                    });
+                }
+
+                // ── Beep Alert System ───────────────────────────────────────────
+                let beepOn = true;
+                let _actx = null;
+                let _prevInnerOk = [null, null, null];  // track per-plate inner state
+                let _prevOuterOk = [null, null, null];  // track per-plate outer state
+                let _skippedInner = [false, false, false]; // track if a missing ring already triggered a skip warning
+                let _skippedOuter = [false, false, false];
+                let _prevDefect = false;
+                let _prevStep = 0;                   // track step to detect final stage arrival
+                let _prevGlobalInner = 0;
+                let _prevGlobalOuter = 0;
+
+                function initAudio() {
+                    if (!_actx) _actx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                function _tone(freq, dur, type = 'square', vol = 0.25) {
+                    if (!_actx) return;
+                    const o = _actx.createOscillator(), g = _actx.createGain();
+                    o.connect(g); g.connect(_actx.destination);
+                    o.type = type; o.frequency.value = freq;
+                    g.gain.setValueAtTime(vol, _actx.currentTime);
+                    g.gain.exponentialRampToValueAtTime(0.0001, _actx.currentTime + dur);
+                    o.start(); o.stop(_actx.currentTime + dur);
+                }
+                // One beep per missing ring — play `count` beeps, 350ms apart
+                function beepMissingN(count) {
+                    if (!beepOn || count <= 0) return;
+                    initAudio();
+                    for (let i = 0; i < count; i++) {
+                        setTimeout(() => {
+                            _tone(660, 0.10, 'square', 0.30);
+                            setTimeout(() => _tone(440, 0.14, 'square', 0.25), 120);
+                        }, i * 350);
                     }
                 }
-                
-                // Clear skipped warning if the missing ring is finally placed
-                if (p.inner_ok) _skippedInner[i] = false;
-                if (p.outer_ok) _skippedOuter[i] = false;
+                // beepMissing kept as alias for defect beep (single ring)
+                function beepMissing() { beepMissingN(1); }
+                // Toggle pill handler
+                function toggleBeep() {
+                    beepOn = !beepOn;
+                    const pill = document.getElementById('beep-pill');
+                    const icon = document.getElementById('beep-icon');
+                    const lbl = document.getElementById('beep-lbl');
+                    const track = document.getElementById('beep-track');
+                    const thumb = document.getElementById('beep-thumb');
+                    if (beepOn) {
+                        initAudio();
+                        _tone(880, 0.06, 'sine', 0.15);   // tiny confirm tone
+                        pill.style.background = '#e2f7ee';
+                        pill.style.borderColor = '#0b905060';
+                        icon.textContent = '🔔';
+                        lbl.textContent = 'ON';
+                        lbl.style.color = '#0b9050';
+                        track.style.background = '#0b9050';
+                        thumb.style.left = '17px';
+                    } else {
+                        pill.style.background = '#f5f7fa';
+                        pill.style.borderColor = '#ccc';
+                        icon.textContent = '🔇';
+                        lbl.textContent = 'OFF';
+                        lbl.style.color = '#9ca3af';
+                        track.style.background = '#dde2ea';
+                        thumb.style.left = '2px';
+                    }
+                }
 
-                // 2. Individual ring removal during assembly (worker knocked it off)
-                // If a single ring goes missing, we beep 1 time for it.
-                if (_prevInnerOk[i] === true && !p.inner_ok) sequenceSkips++;
-                if (_prevOuterOk[i] === true && !p.outer_ok) sequenceSkips++;
+                // ── Camera Modal ────────────────────────────────────────────────
+                function openCamModal() {
+                    document.getElementById('camModal').classList.add('open');
+                    updateRtspPreview();
+                }
+                function closeCamModal(e) {
+                    if (e.target === document.getElementById('camModal')) {
+                        document.getElementById('camModal').classList.remove('open');
+                    }
+                }
+                function updateRtspPreview() {
+                    const ip = document.getElementById('cam_ip').value || '<ip>';
+                    const port = document.getElementById('cam_port').value || '554';
+                    const user = document.getElementById('cam_user').value || 'admin';
+                    const pass = document.getElementById('cam_pass').value ? '••••' : '<pass>';
+                    const stream = document.getElementById('cam_stream').value || '/cam/realmonitor?channel=1&subtype=0';
+                    const sep = stream.startsWith('/') ? '' : '/';
+                    document.getElementById('rtsp-preview').textContent = `rtsp://${user}:${pass}@${ip}:${port}${sep}${stream}`;
+                }
+                ['cam_ip', 'cam_port', 'cam_user', 'cam_pass', 'cam_stream'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.addEventListener('input', updateRtspPreview);
+                });
 
-                _prevInnerOk[i] = p.inner_ok;
-                _prevOuterOk[i] = p.outer_ok;
-            });
-        }
-        
-        // Defect just appeared (outer placed without inner)
-        if (d.defect && !_prevDefect) sequenceSkips = Math.max(sequenceSkips, 1);
+                function toggleAnnotations() {
+                    fetch('/toggle_annotations')
+                        .then(r => r.json())
+                        .then(d => {
+                            updateAnnoPill(d.show_annotations);
+                        });
+                }
 
-        if (sequenceSkips > 0) beepMissingN(sequenceSkips);
-    }
+                function updateAnnoPill(show) {
+                    const pill = document.getElementById('anno-pill');
+                    const icon = document.getElementById('anno-icon');
+                    const lbl = document.getElementById('anno-lbl');
+                    const track = document.getElementById('anno-track');
+                    const thumb = document.getElementById('anno-thumb');
+                    if (!pill || !icon || !lbl || !track || !thumb) return;
+                    if (show) {
+                        pill.style.background = '#eef7fc';
+                        pill.style.borderColor = '#2980b960';
+                        icon.textContent = '👁️';
+                        lbl.textContent = 'SHOW';
+                        lbl.style.color = '#2980b9';
+                        track.style.background = '#2980b9';
+                        thumb.style.left = '17px';
+                    } else {
+                        pill.style.background = '#f5f7fa';
+                        pill.style.borderColor = '#ccc';
+                        icon.textContent = '👁️';
+                        lbl.textContent = 'HIDE';
+                        lbl.style.color = '#9ca3af';
+                        track.style.background = '#dde2ea';
+                        thumb.style.left = '2px';
+                    }
+                }
 
-    _prevDefect = d.defect;
-    _prevStep   = d.current_step;
-    _prevGlobalInner = d.inner_count;
-    _prevGlobalOuter = d.outer_count;
-};
+                window.addEventListener('DOMContentLoaded', () => {
+                    const showAnno = document.body.dataset.showAnnotations === 'true';
+                    updateAnnoPill(showAnno);
+                    if (document.body.dataset.autoCam === 'true') {
+                        openCamModal();
+                    }
+                });
 
-setInterval(() => {
-    fetch('/status')
-        .then(r => r.json())
-        .then(applyStatus)
-        .catch(() => {});
-}, 1000);
+                // Replaces the old fetch('/') which re-rendered the entire HTML page
+                // and competed with the video stream thread, causing stutter.
+                function applyStatus(d) {
+                    const ic = d.inner_count, oc = d.outer_count, step = d.current_step;
 
-</script>
+                    // ─ Status box ───────────────────────────────────────────
+                    const box = document.getElementById('status-box');
+                    const title = document.getElementById('status-title');
+                    const desc = document.getElementById('status-desc');
+
+                    if (box) {
+                        box.className = 'status-box' + (d.defect ? ' defect-box' : '');
+                    }
+                    if (title) {
+                        if (d.defect) {
+                            title.textContent = '⚠ DEFECT DETECTED';
+                            title.className = 'status-title status-defect-title';
+                        } else {
+                            const lbl = step === 1 ? `Inner rings: ${ic}/3 placed`
+                                : step === 2 ? `Outer rings: ${oc}/3 placed`
+                                    : 'Complete';
+                            title.textContent = `STAGE ${step} — ${lbl}`;
+                            title.className = 'status-title';
+                        }
+                    }
+                    if (desc) {
+                        if (d.defect) {
+                            desc.textContent = `⚠ Inner ring missing: ${d.missing_inner} plate(s) — outer placed without inner!`;
+                            desc.className = 'status-red';
+                        } else if (step === 1) {
+                            desc.textContent = d.missing_inner > 0 ? `Inner ring missing: ${d.missing_inner} plate(s)` : 'All inner rings placed';
+                            desc.className = d.missing_inner > 0 ? 'status-red' : 'status-green';
+                        } else if (step === 2) {
+                            desc.textContent = d.missing_outer > 0 ? `Outer ring missing: ${d.missing_outer} plate(s)` : 'All outer rings placed';
+                            desc.className = d.missing_outer > 0 ? 'status-red' : 'status-green';
+                        } else {
+                            desc.textContent = '✓ Assembly complete';
+                            desc.className = 'status-green';
+                        }
+                    }
+
+                    // ─ Step dots ─────────────────────────────────────────
+                    function sg(el, s) {
+                        if (!el) return;
+                        el.className = 'step-group' + (step > s ? ' done' : step === s ? ' active' : '');
+                    }
+                    function sl(el, s) {
+                        if (!el) return;
+                        el.className = 'step-line' + (step > s ? ' done' : '');
+                    }
+                    sg(document.getElementById('step-1'), 1);
+                    sl(document.getElementById('step-line-1'), 1);
+                    sg(document.getElementById('step-2'), 2);
+                    sl(document.getElementById('step-line-2'), 2);
+                    sg(document.getElementById('step-3'), 3);
+
+                    // ─ Missing parts cards ───────────────────────────────
+                    const innerCard = document.getElementById('inner-card');
+                    const innerSub = document.getElementById('inner-sub');
+                    const innerBadge = document.getElementById('inner-badge');
+                    if (innerCard) innerCard.className = 'part-card ' + (ic === 3 ? 'ok' : 'missing');
+                    if (innerSub) innerSub.textContent = `${ic} of 3 placed`;
+                    if (innerBadge) innerBadge.textContent = `${ic}/3 ${ic === 3 ? 'OK' : 'MISSING'}`;
+
+                    const outerCard = document.getElementById('outer-card');
+                    const outerSub = document.getElementById('outer-sub');
+                    const outerBadge = document.getElementById('outer-badge');
+                    if (outerCard) outerCard.className = 'part-card ' + (oc === 3 ? 'ok' : 'missing');
+                    if (outerSub) outerSub.textContent = `${oc} of 3 placed`;
+                    if (outerBadge) outerBadge.textContent = `${oc}/3 ${oc === 3 ? 'OK' : 'MISSING'}`;
+
+                    // ─ Per-plate cubes ─────────────────────────────────
+                    if (d.plates) {
+                        d.plates.forEach((p, i) => {
+                            const ci = document.getElementById(`cube-${i}-inner`);
+                            const co = document.getElementById(`cube-${i}-outer`);
+                            if (ci) { ci.textContent = p.inner_ok ? '✓ INNER' : '✕ INNER'; ci.className = 'status-cube ' + (p.inner_ok ? 'ok' : 'missing'); }
+                            if (co) { co.textContent = p.outer_ok ? '✓ OUTER' : '✕ OUTER'; co.className = 'status-cube ' + (p.outer_ok ? 'ok' : 'missing'); }
+                        });
+                    }
+
+                    // ─ Detection counts ────────────────────────────────
+                    const cntI = document.getElementById('cnt-inner');
+                    const cntO = document.getElementById('cnt-outer');
+                    const cntS = document.getElementById('cnt-stage');
+                    const vI = document.getElementById('cnt-inner-val');
+                    const vO = document.getElementById('cnt-outer-val');
+                    const vS = document.getElementById('cnt-stage-val');
+                    if (cntI) cntI.className = 'count-item' + (ic === 3 ? ' count-full' : '');
+                    if (cntO) cntO.className = 'count-item' + (oc === 3 ? ' count-full' : '');
+                    if (cntS) cntS.className = 'count-item' + (step === 3 ? ' count-full' : '');
+                    if (vI) vI.textContent = `${ic}/3`;
+                    if (vO) vO.textContent = `${oc}/3`;
+                    if (vS) vS.textContent = `${step}/3`;
+
+                    const cycleCount = document.getElementById('cycle-count-val');
+                    const okCountEl = document.getElementById('ok-count-val');
+                    const notokCountEl = document.getElementById('notok-count-val');
+                    
+                    const logDateEl = document.getElementById('log-date');
+                    const logOkCountEl = document.getElementById('log-ok-count');
+                    const logNotokCountEl = document.getElementById('log-notok-count');
+                    const bottomOkCountEl = document.getElementById('bottom-ok-count');
+                    const bottomNotokCountEl = document.getElementById('bottom-notok-count');
+                    const bottomTotalCountEl = document.getElementById('bottom-total-count');
+
+                    if (cycleCount && d.cycle_count !== undefined) cycleCount.textContent = d.cycle_count;
+                    if (okCountEl && d.ok_count !== undefined) okCountEl.textContent = d.ok_count;
+                    if (notokCountEl && d.notok_count !== undefined) notokCountEl.textContent = d.notok_count;
+                    
+                    if (logDateEl && d.current_cycle_date !== undefined) logDateEl.textContent = d.current_cycle_date;
+                    if (logOkCountEl && d.ok_count !== undefined) logOkCountEl.textContent = d.ok_count;
+                    if (logNotokCountEl && d.notok_count !== undefined) logNotokCountEl.textContent = d.notok_count;
+                    if (bottomOkCountEl && d.ok_count !== undefined) bottomOkCountEl.textContent = d.ok_count;
+                    if (bottomNotokCountEl && d.notok_count !== undefined) bottomNotokCountEl.textContent = d.notok_count;
+                    if (bottomTotalCountEl && d.cycle_count !== undefined) bottomTotalCountEl.textContent = d.cycle_count;
+
+                    // Automatically fetch logs when count changes and panel is open
+                    if (d.cycle_count !== undefined && d.cycle_count !== _prevCycleCountForLogs) {
+                        _prevCycleCountForLogs = d.cycle_count;
+                        if (logPanelOpen) {
+                            fetchLogs();
+                        }
+                    }
+
+                    // Sidebar Timer
+                    const timerVal = document.getElementById('cycle-timer-val');
+                    const timerDot = document.getElementById('timer-dot');
+                    const timerLabel = document.getElementById('cycle-timer-label');
+                    // Live Feed Header Timer
+                    const liveTimerVal = document.getElementById('live-timer-val');
+                    const liveTimerDot = document.getElementById('live-timer-dot');
+                    const liveTimerLabel = document.getElementById('live-timer-label');
+
+                    if (d.cycle_elapsed !== undefined) {
+                        const tStr = d.cycle_elapsed.toFixed(1) + 's';
+                        if (timerVal) timerVal.textContent = tStr;
+                        if (liveTimerVal) liveTimerVal.textContent = tStr;
+                    }
+
+                    if (d.cycle_active !== undefined) {
+                        if (d.cycle_active) {
+                            const lbl = d.cycle_is_completed ? 'Per Plate Completed:' : 'Per Plate Running:';
+                            if (timerLabel) timerLabel.textContent = lbl;
+                            if (liveTimerLabel) liveTimerLabel.textContent = lbl;
+
+                            if (timerDot) {
+                                timerDot.style.backgroundColor = '#52c41a';
+                                timerDot.style.boxShadow = '0 0 8px #52c41a';
+                            }
+                            if (liveTimerDot) {
+                                liveTimerDot.style.backgroundColor = '#52c41a';
+                                liveTimerDot.style.boxShadow = '0 0 8px #52c41a';
+                            }
+                        } else {
+                            if (timerLabel) timerLabel.textContent = 'Per Plate Time:';
+                            if (liveTimerLabel) liveTimerLabel.textContent = 'Per Plate Time:';
+
+                            if (timerDot) {
+                                timerDot.style.backgroundColor = '#8c8c8c';
+                                timerDot.style.boxShadow = 'none';
+                            }
+                            if (liveTimerDot) {
+                                liveTimerDot.style.backgroundColor = '#8c8c8c';
+                                liveTimerDot.style.boxShadow = 'none';
+                            }
+                        }
+                    }
+
+                    if (d.show_annotations !== undefined) {
+                        updateAnnoPill(d.show_annotations);
+                    }
+                }
+
+                // Poll wrapper: sequence skip detection and incomplete removal detection
+                const _origApply = applyStatus;
+                applyStatus = function (d) {
+                    _origApply(d);
+
+                    let sequenceSkips = 0;
+
+                    // Detect if this is a global reset (assembly removed)
+                    // If current counts are 0, but previous counts were > 0, it means it was removed.
+                    let isReset = false;
+                    if (d.inner_count === 0 && d.outer_count === 0 && (_prevGlobalInner > 0 || _prevGlobalOuter > 0)) {
+                        isReset = true;
+                    }
+
+                    if (isReset) {
+                        // Assembly was removed! Was it incomplete?
+                        if (_prevGlobalInner < 3 || _prevGlobalOuter < 3) {
+                            // It was incomplete! How many rings were missing in the stage they reached?
+                            let missing = 0;
+                            if (_prevStep === 1) missing = 3 - _prevGlobalInner;
+                            else if (_prevStep === 2) missing = 3 - _prevGlobalOuter;
+                            // (If _prevStep was 3, they completed it -> missing = 0, no beep!)
+
+                            if (missing > 0) beepMissingN(missing);
+                        }
+
+                        // Update states without triggering individual plate removal beeps
+                        if (d.plates) {
+                            d.plates.forEach((p, i) => {
+                                _prevInnerOk[i] = p.inner_ok;
+                                _prevOuterOk[i] = p.outer_ok;
+                                _skippedInner[i] = false;
+                                _skippedOuter[i] = false;
+                            });
+                        }
+                    } else {
+                        // Normal frame, not a reset
+                        if (d.plates) {
+                            d.plates.forEach((p, i) => {
+                                // 1. Sequence skip detection (placed out of order)
+                                // If this ring was just placed, check if any rings to its left are still missing
+                                if (_prevInnerOk[i] === false && p.inner_ok) {
+                                    for (let j = 0; j < i; j++) {
+                                        if (!d.plates[j].inner_ok && !_skippedInner[j]) {
+                                            sequenceSkips++;
+                                            _skippedInner[j] = true; // Mark as warned so we don't beep again for this specific miss
+                                        }
+                                    }
+                                }
+                                if (_prevOuterOk[i] === false && p.outer_ok) {
+                                    for (let j = 0; j < i; j++) {
+                                        if (!d.plates[j].outer_ok && !_skippedOuter[j]) {
+                                            sequenceSkips++;
+                                            _skippedOuter[j] = true;
+                                        }
+                                    }
+                                }
+
+                                // Clear skipped warning if the missing ring is finally placed
+                                if (p.inner_ok) _skippedInner[i] = false;
+                                if (p.outer_ok) _skippedOuter[i] = false;
+
+                                // 2. Individual ring removal during assembly (worker knocked it off)
+                                // If a single ring goes missing, we beep 1 time for it.
+                                if (_prevInnerOk[i] === true && !p.inner_ok) sequenceSkips++;
+                                if (_prevOuterOk[i] === true && !p.outer_ok) sequenceSkips++;
+
+                                _prevInnerOk[i] = p.inner_ok;
+                                _prevOuterOk[i] = p.outer_ok;
+                            });
+                        }
+
+                        // Defect just appeared (outer placed without inner)
+                        if (d.defect && !_prevDefect) sequenceSkips = Math.max(sequenceSkips, 1);
+
+                        if (sequenceSkips > 0) beepMissingN(sequenceSkips);
+                    }
+
+                    _prevDefect = d.defect;
+                    _prevStep = d.current_step;
+                    _prevGlobalInner = d.inner_count;
+                    _prevGlobalOuter = d.outer_count;
+                };
+
+                setInterval(() => {
+                    fetch('/status')
+                        .then(r => r.json())
+                        .then(applyStatus)
+                        .catch(() => { });
+                }, 1000);
+
+            </script>
 </body>
+
 </html>
