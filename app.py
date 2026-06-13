@@ -162,7 +162,7 @@ class AppState:
     paused = False
     source = 'camera'  # 'camera' or 'video'
     video_name = 'Camera 0'
-    threshold = 6.0
+    threshold = 4.0
     inner_count = 0
     outer_count = 0
     plates = [
@@ -184,11 +184,11 @@ class AppState:
     trigger_restart = False
     empty_frames = 0
     # IP Camera credentials
-    cam_ip = ''
+    cam_ip = '192.168.1.250'
     cam_port = '554'
     cam_user = ''
     cam_pass = ''
-    cam_stream = '/cam/realmonitor?channel=1&subtype=0'
+    cam_stream = '/video/live?channel=1&subtype=0'
     cam_connected = False
     
     # Cycle counting
@@ -543,16 +543,16 @@ class VideoProcessor:
                 state.person_detected = False
 
                 # ── Draw P1 / P2 / P3 individual boxes around the cylinders ────────
-                # Defined using the physical center points and dimensions of the cylinders:
-                # P1 center ~26%, P2 center ~52%, P3 center ~78% of frame width.
-                box_y1 = int(h * 0.63)
-                box_y2 = int(h * 0.80)
-                
-                # Boxes are positioned to align perfectly with the physical cylinders and gaps
+                # Adjusted to match the user's hand-drawn red boxes on the full camera view:
+                #   P1: x 18%–38.5%  |  P2: x 39%–57.5%  |  P3: x 58%–76%
+                #   All boxes: y 47% – 83%
+                box_y1 = int(h * 0.47)
+                box_y2 = int(h * 0.83)
+
                 plates_regions = [
-                    (int(w * 0.25), int(w * 0.47)),  # P1
-                    (int(w * 0.48), int(w * 0.685)), # P2
-                    (int(w * 0.695), int(w * 0.87))  # P3
+                    (int(w * 0.18), int(w * 0.385)),  # P1 — left cylinder
+                    (int(w * 0.39), int(w * 0.575)),  # P2 — centre cylinder
+                    (int(w * 0.58), int(w * 0.760)),  # P3 — right cylinder
                 ]
                 
                 font_z = cv2.FONT_HERSHEY_SIMPLEX
@@ -662,8 +662,8 @@ class VideoProcessor:
                                 print(f"Cycle completed successfully! Total today: {state.cycle_count}")
                     
                 # Reset cycle when the template is empty.
-                # We use 75 frames (2.5 seconds) of empty view to reset.
-                if state.empty_frames > 75:
+                # We use 20 frames (~0.66 seconds at 30fps) of empty view to reset.
+                if state.empty_frames > 20:
                     # If a cycle was started but never completed and not logged, log it as Not OK:
                     if state.cycle_active and not state.cycle_logged:
                         if state.inner_count > 0 or state.outer_count > 0:
@@ -737,41 +737,69 @@ class VideoProcessor:
                     outer_status = [False, False, False]
                     inner_status = [False, False, False]
 
+                    # Only outer rings need a per-class confidence boost —
+                    # inner rings are accepted at whatever the global model conf threshold is.
+                    OUTER_MIN_CONF = 0.82        # outer must exceed this (vs global ~0.60-0.70)
+                    OUTER_MIN_WIDTH_FRAC = 0.12  # outer bbox must be >=12% of frame width
+
                     if boxes is not None and len(boxes) > 0:
                         for i, c in enumerate(boxes.cls):
                             cls_name = classes[int(c)].lower()
+                            conf_val = float(boxes.conf[i])
                             coords = boxes.xyxy[i].tolist()
-                            center_x = (coords[0] + coords[2]) / 2
+                            x1, y1, x2, y2 = coords
+                            center_x = (x1 + x2) / 2
                             rel_x = center_x / width
+                            bbox_w_frac = (x2 - x1) / width
 
-                            if rel_x < 0.475:
-                                idx = 0
-                            elif rel_x < 0.69:
-                                idx = 1
+                            # Map detection centre to P1/P2/P3 based on cylinder midpoints:
+                            # 38.7% (between 38.5% & 39%) and 57.8% (between 57.5% & 58%).
+                            if rel_x < 0.387:
+                                idx = 0   # P1 (x 18%–38.5%)
+                            elif rel_x < 0.578:
+                                idx = 1   # P2 (x 39%–57.5%)
                             else:
-                                idx = 2
+                                idx = 2   # P3 (x 58%–76%)
 
                             if 'inner' in cls_name:
+                                # Inner ring: accept all detections that passed the global
+                                # model confidence threshold — no extra filtering needed.
                                 inner_status[idx] = True
                             elif 'outer' in cls_name:
-                                outer_status[idx] = True
+                                # Use user-selected threshold for confidence gating on large detections
+                                current_min_conf = state.threshold / 10.0
+                                if bbox_w_frac >= 0.10:
+                                    if conf_val >= current_min_conf:
+                                        outer_status[idx] = True
+                                else:
+                                    # It's a small bbox (width < 10%), so it physically cannot be a real outer ring.
+                                    # The model likely misclassified an inner ring.
+                                    # Rescue it as an inner ring signal instead of discarding.
+                                    inner_status[idx] = True
 
                     for idx in range(3):
-                        # ── INNER ring: accumulate-only, one-way latch ──
-                        # Counter only goes up. Once inner_ok = True, it never clears
-                        # during this cycle — outer rings appearing cannot affect it.
+                        # ── INNER ring: PURE accumulate-only, one-way latch ──
+                        # NO DECAY — inner rings don't produce false positives,
+                        # so we must never subtract from the counter.
+                        # Decay caused oscillation when model missed 1 frame (motion blur /
+                        # lighting change), preventing the counter from ever reaching threshold.
+                        # Threshold = 3 frames (~0.1s): ultra-fast latch.
                         if inner_status[idx]:
-                            state.plate_frames[idx]['inner'] = min(state.plate_frames[idx]['inner'] + 1, 30)
-                            if state.plate_frames[idx]['inner'] >= 8:
-                                state.plates[idx]['inner_ok'] = True
+                            state.plate_frames[idx]['inner'] = min(state.plate_frames[idx]['inner'] + 1, 10)
+                        # No else-decay: counter only ever goes up until latch fires.
+                        if state.plate_frames[idx]['inner'] >= 3:
+                            state.plates[idx]['inner_ok'] = True
 
-                        # ── OUTER ring: accumulate-only, one-way latch ──
-                        # Counter only goes up. Once outer_ok = True, it never clears
-                        # during this cycle — press covering rings cannot affect it.
+                        # ── OUTER ring: stricter accumulate-only, one-way latch ──
+                        # Requires 5 consecutive valid frames (~0.17s at 30fps) to latch.
                         if outer_status[idx]:
-                            state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 30)
-                            if state.plate_frames[idx]['outer'] >= 15:
-                                state.plates[idx]['outer_ok'] = True
+                            state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 10)
+                        else:
+                            if not state.plates[idx]['outer_ok']:
+                                # Decay quickly if not detected
+                                state.plate_frames[idx]['outer'] = max(state.plate_frames[idx]['outer'] - 1, 0)
+                        if state.plate_frames[idx]['outer'] >= 5:
+                            state.plates[idx]['outer_ok'] = True
 
                     # Live counts always reflect current state
                     state.inner_count = sum(1 for p in state.plates if p['inner_ok'])
@@ -1090,6 +1118,62 @@ def download_log():
         from io import BytesIO
         mem = BytesIO(b"No logs recorded for today yet.")
         return send_file(mem, as_attachment=True, download_name=f"assembly_log_{current_date}.txt", mimetype='text/plain')
+
+@app.route('/debug_vars')
+def debug_vars():
+    global processor
+    boxes = getattr(processor, '_last_boxes', None)
+    names = getattr(processor, '_last_classes', {})
+    
+    detections_info = []
+    width = 1.0
+    last_f = getattr(processor, 'last_frame', None)
+    if last_f is not None:
+        width = last_f.shape[1]
+        
+    if boxes is not None and len(boxes) > 0:
+        for i, c in enumerate(boxes.cls):
+            cls_name = names.get(int(c), 'unknown').lower()
+            conf_val = float(boxes.conf[i])
+            coords = boxes.xyxy[i].tolist()
+            x1, y1, x2, y2 = coords
+            bbox_w_frac = (x2 - x1) / width
+            center_x = (x1 + x2) / 2
+            rel_x = center_x / width
+            
+            # Map index
+            if rel_x < 0.387:
+                idx = 0
+            elif rel_x < 0.578:
+                idx = 1
+            else:
+                idx = 2
+                
+            detections_info.append({
+                "class": cls_name,
+                "conf": conf_val,
+                "width_frac": bbox_w_frac,
+                "center_x": rel_x,
+                "mapped_plate": f"P{idx + 1}"
+            })
+            
+    return jsonify(
+        threshold=state.threshold,
+        inner_count=state.inner_count,
+        outer_count=state.outer_count,
+        plates=state.plates,
+        plate_frames=state.plate_frames,
+        detections=detections_info,
+        source=state.source,
+        video_name=state.video_name,
+        cam_connected=state.cam_connected,
+        cam_ip=state.cam_ip,
+        cam_stream=state.cam_stream,
+        cam_user=state.cam_user,
+        cam_pass=state.cam_pass,
+        cam_port=state.cam_port,
+        jpeg_len=len(processor.jpeg_bytes) if processor.jpeg_bytes else 0
+    )
 
 if __name__ == '__main__':
     # Start the Flask app
