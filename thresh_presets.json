@@ -1,0 +1,8 @@
+{
+  "memory1": {
+    "threshold": 7.5
+  },
+  "memory2": {
+    "threshold": 0.0
+  }
+}

@@ -3,7 +3,7 @@ import os
 import threading
 import datetime
 # pyrefly: ignore [missing-import]
-from flask import Flask, render_template, Response, request, redirect, url_for
+from flask import Flask, render_template, Response, request, redirect, url_for, jsonify
 import numpy as np
 try:
     from ultralytics import YOLO
@@ -92,10 +92,76 @@ def _is_date_header(line):
     parts = line.split(':')
     return len(parts) >= 2 and len(parts[0]) == 10 and parts[0][4] == '-' and parts[0][7] == '-'
 
-def save_cycle_count_with_detail(count, start_ts, end_ts, duration, is_ok=True, details=None):
+def save_cycle_count_with_detail(count, start_ts, end_ts, duration, is_ok=True, details=None,
+                                  plate_inner_ts=None, plate_outer_ts=None,
+                                  plate_inner_time=None, plate_outer_time=None,
+                                  first_plate_placed=None, hydraulic_pressed=False,
+                                  cycle_start_time=None):
     """Append a cycle record grouped under OK / Not OK categories per date."""
     current_date = get_current_date_str()
     file_path = get_log_file_path(current_date)
+
+    # ── Build human-readable detail lines ──────────────────────────────────
+    lines_detail = []
+
+    # Overall person presence duration
+    lines_detail.append(f"  Person was present for: {duration:.1f}s  (Start: {start_ts}  End: {end_ts})")
+
+    # Direction — which plate the person started from.
+    # Primary: first inner ring placed. Fallback: first outer ring placed
+    # (covers Not OK cycles where no inner ring was confirmed at all).
+    direction_idx = first_plate_placed
+    if direction_idx is None and plate_outer_time:
+        earliest = None
+        for i, ot in enumerate(plate_outer_time):
+            if ot is not None:
+                if earliest is None or ot < earliest:
+                    earliest = ot
+                    direction_idx = i
+
+    if direction_idx is not None:
+        plate_name = f"P{direction_idx + 1}"
+        if direction_idx == 0:
+            direction = f"Starting from {plate_name}, left to right direction"
+        elif direction_idx == 2:
+            direction = f"Starting from {plate_name}, right to left direction"
+        else:
+            direction = f"Starting from {plate_name}, centre"
+        lines_detail.append(f"  Direction: {direction}")
+
+    # Per-plate ring placement info
+    plate_ids = ['P1', 'P2', 'P3']
+    for idx in range(3):
+        pid = plate_ids[idx]
+        inner_ts = (plate_inner_ts or [None]*3)[idx]
+        outer_ts = (plate_outer_ts or [None]*3)[idx]
+        i_time   = (plate_inner_time or [None]*3)[idx]
+        o_time   = (plate_outer_time or [None]*3)[idx]
+
+        parts = []
+        if inner_ts:
+            parts.append(f"placed inner ring at {inner_ts}")
+        else:
+            parts.append("inner ring NOT placed")
+        if outer_ts:
+            parts.append(f"placed outer ring at {outer_ts}")
+        else:
+            parts.append("outer ring NOT placed")
+
+        # Per-plate person presence: from cycle start to outer ring placed (or end)
+        if cycle_start_time is not None:
+            end_ref = o_time if o_time else (i_time if i_time else None)
+            if end_ref:
+                plate_dur = end_ref - cycle_start_time
+                parts.append(f"person present at plate: {plate_dur:.1f}s")
+
+        lines_detail.append(f"  {pid}: " + ", ".join(parts))
+
+    # Hydraulic press event
+    if hydraulic_pressed:
+        lines_detail.append("  Person pressed the hydraulic")
+
+    # Legacy compact line kept for backward-compat / extra ring counts
     details_suffix = f" | {details}" if details else ""
     new_detail = f"- Cycle {count}: Start {start_ts}, End {end_ts} (Duration: {duration:.1f}s){details_suffix}"
 
@@ -111,23 +177,45 @@ def save_cycle_count_with_detail(count, start_ts, end_ts, duration, is_ok=True, 
             print(f"Error reading {file_path}: {e}")
 
     cur_cat  = None   # 'ok' | 'notok' | None
+    cur_entry = None  # (compact_line, [detail_lines]) being built
     for line in raw:
         stripped = line.strip()
         if not stripped:
             continue
         if _is_date_header(stripped):
+            if cur_entry is not None:
+                cat = cur_cat if cur_cat else 'ok'
+                sections[cat].append(cur_entry)
+                cur_entry = None
             cur_cat  = None
         elif stripped.startswith('OK:'):
+            if cur_entry is not None:
+                cat = cur_cat if cur_cat else 'ok'
+                sections[cat].append(cur_entry)
+                cur_entry = None
             cur_cat = 'ok'
         elif stripped.startswith('Not OK:'):
+            if cur_entry is not None:
+                cat = cur_cat if cur_cat else 'ok'
+                sections[cat].append(cur_entry)
+                cur_entry = None
             cur_cat = 'notok'
         elif stripped.startswith('- Cycle'):
-            cat = cur_cat if cur_cat else 'ok'
-            sections[cat].append(stripped)
+            if cur_entry is not None:
+                cat = cur_cat if cur_cat else 'ok'
+                sections[cat].append(cur_entry)
+            cur_entry = (stripped, [])
+        elif cur_entry is not None:
+            # detail sub-line belonging to current entry
+            cur_entry[1].append(stripped)
+    if cur_entry is not None:
+        cat = cur_cat if cur_cat else 'ok'
+        sections[cat].append(cur_entry)
 
     # --- Add new cycle to today's section ---
     cat_key = 'ok' if is_ok else 'notok'
-    sections[cat_key].append(new_detail)
+    # Each entry is (compact_line, [detail_lines...])
+    sections[cat_key].append((new_detail, lines_detail))
 
     # --- Write back in grouped format ---
     ok_list    = sections['ok']
@@ -137,12 +225,24 @@ def save_cycle_count_with_detail(count, start_ts, end_ts, duration, is_ok=True, 
     output.append(f"{current_date}: {total}")
     if ok_list:
         output.append(f"  OK: {len(ok_list)}")
-        for d in ok_list:
+        for entry in ok_list:
+            if isinstance(entry, tuple):
+                d, extra = entry
+            else:
+                d, extra = entry, []
             output.append(f"    {d}")
+            for el in extra:
+                output.append(f"      {el}")
     if notok_list:
         output.append(f"  Not OK: {len(notok_list)}")
-        for d in notok_list:
+        for entry in notok_list:
+            if isinstance(entry, tuple):
+                d, extra = entry
+            else:
+                d, extra = entry, []
             output.append(f"    {d}")
+            for el in extra:
+                output.append(f"      {el}")
 
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -163,6 +263,15 @@ class AppState:
     source = 'camera'  # 'camera' or 'video'
     video_name = 'Camera 0'
     threshold = 4.0
+    # ROI configuration (percentages of frame dimensions)
+    roi_y1 = 0.47
+    roi_y2 = 0.83
+    roi_p1_x1 = 0.18
+    roi_p1_x2 = 0.385
+    roi_p2_x1 = 0.39
+    roi_p2_x2 = 0.575
+    roi_p3_x1 = 0.58
+    roi_p3_x2 = 0.76
     inner_count = 0
     outer_count = 0
     plates = [
@@ -214,6 +323,18 @@ class AppState:
     inner_ever_confirmed = [False, False, False]
     # Snapshot locked at phase transition — hard-locks inner_ok for rest of cycle.
     inner_snapshot = [False, False, False]
+
+    # Per-plate ring placement timestamps (wall-clock HH:MM:SS string, or None)
+    plate_inner_ts = [None, None, None]   # when inner ring confirmed per plate
+    plate_outer_ts = [None, None, None]   # when outer ring confirmed per plate
+    plate_inner_time = [None, None, None] # epoch time of inner confirmation
+    plate_outer_time = [None, None, None] # epoch time of outer confirmation
+
+    # Direction tracking — which plate had its inner ring placed first
+    first_plate_placed = None   # 0, 1, or 2 (index of first inner-confirmed plate)
+
+    # Hydraulic press tracking
+    hydraulic_pressed = False   # set True when all 6 rings done and cycle ends
 
 state = AppState()
 state.current_cycle_date = get_current_date_str()
@@ -405,6 +526,12 @@ class VideoProcessor:
                     p['inner_ok'] = False
                     p['outer_ok'] = False
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
+                state.plate_inner_ts = [None, None, None]
+                state.plate_outer_ts = [None, None, None]
+                state.plate_inner_time = [None, None, None]
+                state.plate_outer_time = [None, None, None]
+                state.first_plate_placed = None
+                state.hydraulic_pressed = False
                 
             if getattr(state, 'trigger_restart', False):
                 if state.source == 'video' and state.video_name != 'No video found':
@@ -441,67 +568,61 @@ class VideoProcessor:
                     p['inner_ok'] = False
                     p['outer_ok'] = False
                 state.plate_frames = [{'inner': 0, 'outer': 0} for _ in range(3)]
+                state.plate_inner_ts = [None, None, None]
+                state.plate_outer_ts = [None, None, None]
+                state.plate_inner_time = [None, None, None]
+                state.plate_outer_time = [None, None, None]
+                state.first_plate_placed = None
+                state.hydraulic_pressed = False
                 consecutive_failures = 0
                 
             if state.paused:
-                if getattr(self, 'last_frame', None) is not None:
-                    # Keep streaming the last frame so the browser doesn't black screen on refresh
-                    frame = self.last_frame.copy()
-                    
-                    # Draw a neat PAUSED badge in the corner
-                    text = "PAUSED"
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    scale = 1.0
-                    thick = 2
-                    (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
-                    cv2.rectangle(frame, (10, 10), (10 + tw + 20, 10 + th + 20), (0, 0, 0), -1)
-                    cv2.putText(frame, text, (20, 10 + th + 10), font, scale, (0, 0, 255), thick)
-                    
-                    ret, buffer = cv2.imencode('.jpg', frame)
-                    if ret:
-                        self.jpeg_bytes = buffer.tobytes()
-                        self.update_count += 1
-                time.sleep(0.1)
-                continue
-                
-            if cap is None:
-                self._set_placeholder("Waiting for IP Camera \u2014 click Camera to connect")
-                time.sleep(0.5)
-                continue
-
-
-            success, frame = cap.read()
-            if not success:
-                if state.source == 'video' and state.video_name != 'No video found':
-                    if cap:
-                        try:
-                            cap.release()
-                        except:
-                            pass
-                    cap = VideoProcessor._open_cap(state.video_name)
-                    consecutive_failures = 0
-                    time.sleep(0.05)
-                    continue
+                if getattr(self, 'last_raw_frame', None) is not None:
+                    frame = self.last_raw_frame.copy()
                 else:
-                    consecutive_failures += 1
-                    frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                    msg = "Camera disconnected or video file invalid"
-                    cv2.putText(frame, msg, (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    ret, buffer = cv2.imencode('.jpg', frame)
-                    if ret:
-                        self.jpeg_bytes = buffer.tobytes()
-                        self.update_count += 1
+                    self._set_placeholder("Waiting for IP Camera — click Camera to connect")
                     time.sleep(0.1)
                     continue
             else:
-                consecutive_failures = 0
+                if cap is None:
+                    self._set_placeholder("Waiting for IP Camera \u2014 click Camera to connect")
+                    time.sleep(0.5)
+                    continue
+
+                success, frame = cap.read()
+                if not success:
+                    if state.source == 'video' and state.video_name != 'No video found':
+                        if cap:
+                            try:
+                                cap.release()
+                            except:
+                                pass
+                        cap = VideoProcessor._open_cap(state.video_name)
+                        consecutive_failures = 0
+                        time.sleep(0.05)
+                        continue
+                    else:
+                        consecutive_failures += 1
+                        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                        msg = "Camera disconnected or video file invalid"
+                        cv2.putText(frame, msg, (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        if ret:
+                            self.jpeg_bytes = buffer.tobytes()
+                            self.update_count += 1
+                        time.sleep(0.1)
+                        continue
+                else:
+                    consecutive_failures = 0
+                    self.last_raw_frame = frame.copy()
             
             if not getattr(state, 'sealing_model_loaded', False) and not getattr(state, 'person_model_loaded', False):
                 load_model()
 
             if getattr(state, 'sealing_model_loaded', False) or getattr(state, 'person_model_loaded', False):
                 # Provide the freshest frame to the inference thread
-                self.latest_frame_for_yolo = frame.copy()
+                if not state.paused:
+                    self.latest_frame_for_yolo = frame.copy()
 
                 boxes = getattr(self, '_last_boxes', None)
                 classes = getattr(self, '_last_classes', {})
@@ -546,13 +667,13 @@ class VideoProcessor:
                 # Adjusted to match the user's hand-drawn red boxes on the full camera view:
                 #   P1: x 18%–38.5%  |  P2: x 39%–57.5%  |  P3: x 58%–76%
                 #   All boxes: y 47% – 83%
-                box_y1 = int(h * 0.47)
-                box_y2 = int(h * 0.83)
+                box_y1 = int(h * state.roi_y1)
+                box_y2 = int(h * state.roi_y2)
 
                 plates_regions = [
-                    (int(w * 0.18), int(w * 0.385)),  # P1 — left cylinder
-                    (int(w * 0.39), int(w * 0.575)),  # P2 — centre cylinder
-                    (int(w * 0.58), int(w * 0.760)),  # P3 — right cylinder
+                    (int(w * state.roi_p1_x1), int(w * state.roi_p1_x2)),  # P1 — left cylinder
+                    (int(w * state.roi_p2_x1), int(w * state.roi_p2_x2)),  # P2 — centre cylinder
+                    (int(w * state.roi_p3_x1), int(w * state.roi_p3_x2)),  # P3 — right cylinder
                 ]
                 
                 font_z = cv2.FONT_HERSHEY_SIMPLEX
@@ -599,45 +720,87 @@ class VideoProcessor:
                     sy = ly + sh + int(10 * scale_factor)
                     cv2.putText(frame, sub_label, (sx, sy), font_z, fs_sub, col, 1)
 
-                # Count detections in this frame (for auto-reset logic)
-                inner_c = 0
-                outer_c = 0
-                if boxes is not None and len(boxes) > 0:
-                    for c in boxes.cls:
-                        cls_name = classes[int(c)].lower()
-                        if 'inner' in cls_name:
-                            inner_c += 1
-                        elif 'outer' in cls_name:
-                            outer_c += 1
+                if not state.paused:
+                    # Count detections in this frame (for auto-reset logic)
+                    inner_c = 0
+                    outer_c = 0
+                    if boxes is not None and len(boxes) > 0:
+                        for c in boxes.cls:
+                            cls_name = classes[int(c)].lower()
+                            if 'inner' in cls_name:
+                                inner_c += 1
+                            elif 'outer' in cls_name:
+                                outer_c += 1
 
-                # === BATCH COMPLETE OR ABORTED: Watch for auto-reset ===
-                if inner_c == 0 and outer_c == 0:
-                    state.empty_frames += 1
-                    if state.cycle_active and not state.cycle_is_completed:
-                        state.cycle_elapsed = time.time() - state.cycle_start_time
-                else:
-                    state.empty_frames = 0
-                    if not state.cycle_active:
-                        # Only start a new cycle if it's not a finished plate (e.g. outer rings < 2)
-                        if outer_c < 2:
-                            state.cycle_active = True
-                            state.cycle_start_time = time.time()
-                            state.cycle_start_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                            state.cycle_is_completed = False
-                            state.cycle_logged = False
-                            state.cycle_elapsed = 0.0
-                    elif not state.cycle_is_completed:
-                        state.cycle_elapsed = time.time() - state.cycle_start_time
+                    # === BATCH COMPLETE OR ABORTED: Watch for auto-reset ===
+                    if inner_c == 0 and outer_c == 0:
+                        state.empty_frames += 1
+                        if state.cycle_active and not state.cycle_is_completed:
+                            state.cycle_elapsed = time.time() - state.cycle_start_time
+                    else:
+                        state.empty_frames = 0
+                        if not state.cycle_active:
+                            # Only start a new cycle if it's not a finished plate (e.g. outer rings < 2)
+                            if outer_c < 2:
+                                state.cycle_active = True
+                                state.cycle_start_time = time.time()
+                                state.cycle_start_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                                state.cycle_is_completed = False
+                                state.cycle_logged = False
+                                state.cycle_elapsed = 0.0
+                        elif not state.cycle_is_completed:
+                            state.cycle_elapsed = time.time() - state.cycle_start_time
+                            
+                            # Immediate completion logging:
+                            if state.inner_count == 3 and state.outer_count == 3:
+                                if not state.cycle_logged:
+                                    state.cycle_is_completed = True
+                                    state.cycle_end_time = time.time()
+                                    state.cycle_end_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                                    state.cycle_elapsed = state.cycle_end_time - state.cycle_start_time
+                                    check_date_transition()
+                                    state.cycle_count += 1
+
+                                    # Gather plate counts
+                                    counts_list = []
+                                    total_rings = 0
+                                    for p in state.plates:
+                                        inner_val = 1 if p['inner_ok'] else 0
+                                        outer_val = 1 if p['outer_ok'] else 0
+                                        total_rings += (inner_val + outer_val)
+                                        counts_list.append(f"{p['id']}: Inner {inner_val}, Outer {outer_val}")
+                                    total_missing = 6 - total_rings
+                                    plate_counts_str = f"Total Rings: {total_rings} | Total Missing: {total_missing} | " + " | ".join(counts_list)
+
+                                    save_cycle_count_with_detail(
+                                        state.cycle_count,
+                                        state.cycle_start_timestamp,
+                                        state.cycle_end_timestamp,
+                                        state.cycle_elapsed,
+                                        is_ok=True,
+                                        details=plate_counts_str,
+                                        plate_inner_ts=list(state.plate_inner_ts),
+                                        plate_outer_ts=list(state.plate_outer_ts),
+                                        plate_inner_time=list(state.plate_inner_time),
+                                        plate_outer_time=list(state.plate_outer_time),
+                                        first_plate_placed=state.first_plate_placed,
+                                        hydraulic_pressed=state.hydraulic_pressed,
+                                        cycle_start_time=state.cycle_start_time,
+                                    )
+                                    state.cycle_logged = True
+                                    print(f"Cycle completed successfully! Total today: {state.cycle_count}")
                         
-                        # Immediate completion logging:
-                        if state.inner_count == 3 and state.outer_count == 3:
-                            if not state.cycle_logged:
-                                state.cycle_is_completed = True
-                                state.cycle_end_time = time.time()
-                                state.cycle_end_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                                state.cycle_elapsed = state.cycle_end_time - state.cycle_start_time
+                    # Reset cycle when the template is empty.
+                    # We use 20 frames (~0.66 seconds at 30fps) of empty view to reset.
+                    if state.empty_frames > 20:
+                        # If a cycle was started but never completed and not logged, log it as Not OK:
+                        if state.cycle_active and not state.cycle_logged:
+                            if state.inner_count > 0 or state.outer_count > 0:
                                 check_date_transition()
                                 state.cycle_count += 1
+                                end_time = time.time() - 2.5
+                                duration = max(0.1, end_time - state.cycle_start_time)
+                                end_ts = datetime.datetime.fromtimestamp(end_time).strftime("%H:%M:%S")
                                 
                                 # Gather plate counts
                                 counts_list = []
@@ -650,163 +813,171 @@ class VideoProcessor:
                                 total_missing = 6 - total_rings
                                 plate_counts_str = f"Total Rings: {total_rings} | Total Missing: {total_missing} | " + " | ".join(counts_list)
 
+                                # Gather missing info separately
+                                missing_list = []
+                                for p in state.plates:
+                                    if not p['inner_ok']:
+                                        missing_list.append(f"{p['id']} Inner missing")
+                                    if not p['outer_ok']:
+                                        missing_list.append(f"{p['id']} Outer missing")
+                                
+                                missing_info = None
+                                if missing_list:
+                                    missing_info = f"Missing: {', '.join(missing_list)}"
+
+                                details_str = plate_counts_str
+                                if missing_info:
+                                    details_str += f" | {missing_info}"
+
                                 save_cycle_count_with_detail(
                                     state.cycle_count,
                                     state.cycle_start_timestamp,
-                                    state.cycle_end_timestamp,
-                                    state.cycle_elapsed,
-                                    is_ok=True,
-                                    details=plate_counts_str
+                                    end_ts,
+                                    duration,
+                                    is_ok=False,
+                                    details=details_str,
+                                    plate_inner_ts=list(state.plate_inner_ts),
+                                    plate_outer_ts=list(state.plate_outer_ts),
+                                    plate_inner_time=list(state.plate_inner_time),
+                                    plate_outer_time=list(state.plate_outer_time),
+                                    first_plate_placed=state.first_plate_placed,
+                                    hydraulic_pressed=state.hydraulic_pressed,
+                                    cycle_start_time=state.cycle_start_time,
                                 )
-                                state.cycle_logged = True
-                                print(f"Cycle completed successfully! Total today: {state.cycle_count}")
-                    
-                # Reset cycle when the template is empty.
-                # We use 20 frames (~0.66 seconds at 30fps) of empty view to reset.
-                if state.empty_frames > 20:
-                    # If a cycle was started but never completed and not logged, log it as Not OK:
-                    if state.cycle_active and not state.cycle_logged:
-                        if state.inner_count > 0 or state.outer_count > 0:
-                            check_date_transition()
-                            state.cycle_count += 1
-                            end_time = time.time() - 2.5
-                            duration = max(0.1, end_time - state.cycle_start_time)
-                            end_ts = datetime.datetime.fromtimestamp(end_time).strftime("%H:%M:%S")
-                            
-                            # Gather plate counts
-                            counts_list = []
-                            total_rings = 0
-                            for p in state.plates:
-                                inner_val = 1 if p['inner_ok'] else 0
-                                outer_val = 1 if p['outer_ok'] else 0
-                                total_rings += (inner_val + outer_val)
-                                counts_list.append(f"{p['id']}: Inner {inner_val}, Outer {outer_val}")
-                            total_missing = 6 - total_rings
-                            plate_counts_str = f"Total Rings: {total_rings} | Total Missing: {total_missing} | " + " | ".join(counts_list)
+                                print(f"Cycle logged as Not OK! Total today: {state.cycle_count}")
+                        
+                        # Reset all variables for next cycle
+                        state.cycle_active = False
+                        state.cycle_elapsed = 0.0
+                        state.cycle_is_completed = False
+                        state.cycle_logged = False
+                        
+                        for p in state.plates:
+                            p['inner_ok'] = False
+                            p['outer_ok'] = False
+                        for pf in state.plate_frames:
+                            pf['inner'] = 0
+                            pf['outer'] = 0
+                        state.inner_count = 0
+                        state.outer_count = 0
+                        state.outer_phase_started = False
+                        state.inner_ever_confirmed = [False, False, False]
+                        state.inner_snapshot = [False, False, False]
+                        state.empty_frames = 0
+                        # Reset per-plate timing and direction tracking
+                        state.plate_inner_ts = [None, None, None]
+                        state.plate_outer_ts = [None, None, None]
+                        state.plate_inner_time = [None, None, None]
+                        state.plate_outer_time = [None, None, None]
+                        state.first_plate_placed = None
+                        state.hydraulic_pressed = False
 
-                            # Gather missing info separately
-                            missing_list = []
-                            for p in state.plates:
-                                if not p['inner_ok']:
-                                    missing_list.append(f"{p['id']} Inner missing")
-                                if not p['outer_ok']:
-                                    missing_list.append(f"{p['id']} Outer missing")
-                            
-                            missing_info = None
-                            if missing_list:
-                                missing_info = f"Missing: {', '.join(missing_list)}"
+                    # === ALWAYS: Update per-plate state — simple accumulate-only latches ===
+                    # Inner and outer are INDEPENDENT. Once confirmed, each stays confirmed
+                    # until the cycle resets. No phase gating needed.
+                    else:
+                        width = frame.shape[1]
+                        outer_status = [False, False, False]
+                        inner_status = [False, False, False]
 
-                            details_str = plate_counts_str
-                            if missing_info:
-                                details_str += f" | {missing_info}"
+                        # Only outer rings need a per-class confidence boost —
+                        # inner rings are accepted at whatever the global model conf threshold is.
+                        OUTER_MIN_CONF = 0.82        # outer must exceed this (vs global ~0.60-0.70)
+                        OUTER_MIN_WIDTH_FRAC = 0.12  # outer bbox must be >=12% of frame width
 
-                            save_cycle_count_with_detail(
-                                state.cycle_count,
-                                state.cycle_start_timestamp,
-                                end_ts,
-                                duration,
-                                is_ok=False,
-                                details=details_str
-                            )
-                            print(f"Cycle logged as Not OK! Total today: {state.cycle_count}")
-                    
-                    # Reset all variables for next cycle
-                    state.cycle_active = False
-                    state.cycle_elapsed = 0.0
-                    state.cycle_is_completed = False
-                    state.cycle_logged = False
-                    
-                    for p in state.plates:
-                        p['inner_ok'] = False
-                        p['outer_ok'] = False
-                    for pf in state.plate_frames:
-                        pf['inner'] = 0
-                        pf['outer'] = 0
-                    state.inner_count = 0
-                    state.outer_count = 0
-                    state.outer_phase_started = False
-                    state.inner_ever_confirmed = [False, False, False]
-                    state.inner_snapshot = [False, False, False]
-                    state.empty_frames = 0
+                        if boxes is not None and len(boxes) > 0:
+                            for i, c in enumerate(boxes.cls):
+                                cls_name = classes[int(c)].lower()
+                                conf_val = float(boxes.conf[i])
+                                coords = boxes.xyxy[i].tolist()
+                                x1, y1, x2, y2 = coords
+                                center_x = (x1 + x2) / 2
+                                rel_x = center_x / width
+                                bbox_w_frac = (x2 - x1) / width
 
-                # === ALWAYS: Update per-plate state — simple accumulate-only latches ===
-                # Inner and outer are INDEPENDENT. Once confirmed, each stays confirmed
-                # until the cycle resets. No phase gating needed.
-                else:
-                    width = frame.shape[1]
-                    outer_status = [False, False, False]
-                    inner_status = [False, False, False]
-
-                    # Only outer rings need a per-class confidence boost —
-                    # inner rings are accepted at whatever the global model conf threshold is.
-                    OUTER_MIN_CONF = 0.82        # outer must exceed this (vs global ~0.60-0.70)
-                    OUTER_MIN_WIDTH_FRAC = 0.12  # outer bbox must be >=12% of frame width
-
-                    if boxes is not None and len(boxes) > 0:
-                        for i, c in enumerate(boxes.cls):
-                            cls_name = classes[int(c)].lower()
-                            conf_val = float(boxes.conf[i])
-                            coords = boxes.xyxy[i].tolist()
-                            x1, y1, x2, y2 = coords
-                            center_x = (x1 + x2) / 2
-                            rel_x = center_x / width
-                            bbox_w_frac = (x2 - x1) / width
-
-                            # Map detection centre to P1/P2/P3 based on cylinder midpoints:
-                            # 38.7% (between 38.5% & 39%) and 57.8% (between 57.5% & 58%).
-                            if rel_x < 0.387:
-                                idx = 0   # P1 (x 18%–38.5%)
-                            elif rel_x < 0.578:
-                                idx = 1   # P2 (x 39%–57.5%)
-                            else:
-                                idx = 2   # P3 (x 58%–76%)
-
-                            if 'inner' in cls_name:
-                                # Inner ring: accept all detections that passed the global
-                                # model confidence threshold — no extra filtering needed.
-                                inner_status[idx] = True
-                            elif 'outer' in cls_name:
-                                # Use user-selected threshold for confidence gating on large detections
-                                current_min_conf = state.threshold / 10.0
-                                if bbox_w_frac >= 0.10:
-                                    if conf_val >= current_min_conf:
-                                        outer_status[idx] = True
+                                # Map detection centre to P1/P2/P3 based on cylinder midpoints:
+                                mid1 = (state.roi_p1_x2 + state.roi_p2_x1) / 2
+                                mid2 = (state.roi_p2_x2 + state.roi_p3_x1) / 2
+                                if rel_x < mid1:
+                                    idx = 0   # P1
+                                elif rel_x < mid2:
+                                    idx = 1   # P2
                                 else:
-                                    # It's a small bbox (width < 10%), so it physically cannot be a real outer ring.
-                                    # The model likely misclassified an inner ring.
-                                    # Rescue it as an inner ring signal instead of discarding.
+                                    idx = 2   # P3
+
+                                if 'inner' in cls_name:
+                                    # Inner ring: accept all detections that passed the global
+                                    # model confidence threshold — no extra filtering needed.
                                     inner_status[idx] = True
+                                elif 'outer' in cls_name:
+                                    # Use user-selected threshold for confidence gating on large detections
+                                    current_min_conf = state.threshold / 10.0
+                                    if bbox_w_frac >= 0.10:
+                                        if conf_val >= current_min_conf:
+                                            outer_status[idx] = True
+                                    else:
+                                        # It's a small bbox (width < 10%), so it physically cannot be a real outer ring.
+                                        # The model likely misclassified an inner ring.
+                                        # Rescue it as an inner ring signal instead of discarding.
+                                        inner_status[idx] = True
 
-                    for idx in range(3):
-                        # ── INNER ring: PURE accumulate-only, one-way latch ──
-                        # NO DECAY — inner rings don't produce false positives,
-                        # so we must never subtract from the counter.
-                        # Decay caused oscillation when model missed 1 frame (motion blur /
-                        # lighting change), preventing the counter from ever reaching threshold.
-                        # Threshold = 3 frames (~0.1s): ultra-fast latch.
-                        if inner_status[idx]:
-                            state.plate_frames[idx]['inner'] = min(state.plate_frames[idx]['inner'] + 1, 10)
-                        # No else-decay: counter only ever goes up until latch fires.
-                        if state.plate_frames[idx]['inner'] >= 3:
-                            state.plates[idx]['inner_ok'] = True
+                        for idx in range(3):
+                            # ── INNER ring: PURE accumulate-only, one-way latch ──
+                            # NO DECAY — inner rings don't produce false positives,
+                            # so we must never subtract from the counter.
+                            # Decay caused oscillation when model missed 1 frame (motion blur /
+                            # lighting change), preventing the counter from ever reaching threshold.
+                            # Threshold = 3 frames (~0.1s): ultra-fast latch.
+                            if inner_status[idx]:
+                                state.plate_frames[idx]['inner'] = min(state.plate_frames[idx]['inner'] + 1, 10)
+                            # No else-decay: counter only ever goes up until latch fires.
+                            if state.plate_frames[idx]['inner'] >= 3:
+                                if not state.plates[idx]['inner_ok']:
+                                    # First time inner latches for this plate — record timestamp
+                                    now_ts = datetime.datetime.now()
+                                    state.plate_inner_ts[idx] = now_ts.strftime("%H:%M:%S")
+                                    state.plate_inner_time[idx] = now_ts.timestamp()
+                                    # Track which plate was placed first (direction)
+                                    if state.first_plate_placed is None:
+                                        state.first_plate_placed = idx
+                                state.plates[idx]['inner_ok'] = True
 
-                        # ── OUTER ring: stricter accumulate-only, one-way latch ──
-                        # Requires 5 consecutive valid frames (~0.17s at 30fps) to latch.
-                        if outer_status[idx]:
-                            state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 10)
-                        else:
-                            if not state.plates[idx]['outer_ok']:
-                                # Decay quickly if not detected
-                                state.plate_frames[idx]['outer'] = max(state.plate_frames[idx]['outer'] - 1, 0)
-                        if state.plate_frames[idx]['outer'] >= 5:
-                            state.plates[idx]['outer_ok'] = True
+                            # ── OUTER ring: stricter accumulate-only, one-way latch ──
+                            # Requires 5 consecutive valid frames (~0.17s at 30fps) to latch.
+                            if outer_status[idx]:
+                                state.plate_frames[idx]['outer'] = min(state.plate_frames[idx]['outer'] + 1, 10)
+                            else:
+                                if not state.plates[idx]['outer_ok']:
+                                    # Decay quickly if not detected
+                                    state.plate_frames[idx]['outer'] = max(state.plate_frames[idx]['outer'] - 1, 0)
+                            if state.plate_frames[idx]['outer'] >= 5:
+                                if not state.plates[idx]['outer_ok']:
+                                    # First time outer latches for this plate — record timestamp
+                                    now_ts = datetime.datetime.now()
+                                    state.plate_outer_ts[idx] = now_ts.strftime("%H:%M:%S")
+                                    state.plate_outer_time[idx] = now_ts.timestamp()
+                                state.plates[idx]['outer_ok'] = True
 
-                    # Live counts always reflect current state
-                    state.inner_count = sum(1 for p in state.plates if p['inner_ok'])
-                    state.outer_count = sum(1 for p in state.plates if p['outer_ok'])
+                        # Live counts always reflect current state
+                        state.inner_count = sum(1 for p in state.plates if p['inner_ok'])
+                        state.outer_count = sum(1 for p in state.plates if p['outer_ok'])
+
+                        # Mark hydraulic press when all 6 rings are confirmed
+                        if state.inner_count == 3 and state.outer_count == 3:
+                            state.hydraulic_pressed = True
             else:
                 cv2.putText(frame, "Model 'model/best.pt' not found.", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 cv2.putText(frame, "Place your model in the model/ folder.", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+            if state.paused:
+                # Draw a neat PAUSED badge in the corner
+                text = "PAUSED"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 1.0
+                thick = 2
+                (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+                cv2.rectangle(frame, (10, 10), (10 + tw + 20, 10 + th + 20), (0, 0, 0), -1)
+                cv2.putText(frame, text, (20, 10 + th + 10), font, scale, (0, 0, 255), thick)
 
             self.last_frame = frame.copy()
             # Quality 78 — visually identical to 95 but ~40% smaller → faster network
@@ -1174,6 +1345,774 @@ def debug_vars():
         cam_port=state.cam_port,
         jpeg_len=len(processor.jpeg_bytes) if processor.jpeg_bytes else 0
     )
+
+@app.route('/download_pdf_report')
+def download_pdf_report():
+    """Generate and return a vivid, branded PDF assembly report for today."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import mm
+        from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                        Paragraph, Spacer, HRFlowable)
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        from reportlab.platypus import PageBreak
+        from io import BytesIO
+        import re as _re
+
+        # ── Colour palette ──────────────────────────────────────────────────
+        BRAND_DARK   = colors.HexColor('#0b3d91')   # deep navy
+        BRAND_MID    = colors.HexColor('#1565c0')   # royal blue
+        BRAND_LIGHT  = colors.HexColor('#e3f0ff')   # light blue tint
+        GREEN_DARK   = colors.HexColor('#1b5e20')
+        GREEN_MID    = colors.HexColor('#2e7d32')
+        GREEN_LIGHT  = colors.HexColor('#e8f5e9')
+        RED_DARK     = colors.HexColor('#b71c1c')
+        RED_MID      = colors.HexColor('#c62828')
+        RED_LIGHT    = colors.HexColor('#ffebee')
+        AMBER        = colors.HexColor('#f57f17')
+        AMBER_LIGHT  = colors.HexColor('#fff8e1')
+        GREY_DARK    = colors.HexColor('#37474f')
+        GREY_MID     = colors.HexColor('#607d8b')
+        GREY_LIGHT   = colors.HexColor('#f5f7fa')
+        WHITE        = colors.white
+        BLACK        = colors.black
+
+        current_date = get_current_date_str()
+        file_path = get_log_file_path(current_date)
+
+        # ── Parse log file ─────────────────────────────────────────────────
+        ok_entries    = []   # list of dicts
+        notok_entries = []
+
+        def _parse_cycle_line(line):
+            """Extract cycle number, start, end, duration from compact line."""
+            m = _re.search(r'Cycle\s+(\d+).*?Start\s+([\d:]+).*?End\s+([\d:]+).*?Duration:\s*([\d.]+)s', line)
+            if m:
+                return {
+                    'num': int(m.group(1)),
+                    'start': m.group(2),
+                    'end': m.group(3),
+                    'duration': float(m.group(4)),
+                }
+            m2 = _re.search(r'Cycle\s+(\d+)', line)
+            return {'num': int(m2.group(1)) if m2 else 0, 'start': '-', 'end': '-', 'duration': 0.0}
+
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+            cur_cat = None
+            cur_entry = None
+            for line in raw:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if _is_date_header(stripped):
+                    if cur_entry:
+                        (ok_entries if cur_cat == 'ok' else notok_entries).append(cur_entry)
+                        cur_entry = None
+                    cur_cat = None
+                elif stripped.startswith('OK:'):
+                    if cur_entry:
+                        (ok_entries if cur_cat == 'ok' else notok_entries).append(cur_entry)
+                        cur_entry = None
+                    cur_cat = 'ok'
+                elif stripped.startswith('Not OK:'):
+                    if cur_entry:
+                        (ok_entries if cur_cat == 'ok' else notok_entries).append(cur_entry)
+                        cur_entry = None
+                    cur_cat = 'notok'
+                elif stripped.startswith('- Cycle'):
+                    if cur_entry:
+                        (ok_entries if cur_cat == 'ok' else notok_entries).append(cur_entry)
+                    cur_entry = _parse_cycle_line(stripped)
+                    cur_entry['details'] = []
+                    cur_entry['cat'] = cur_cat if cur_cat else 'ok'
+                elif cur_entry is not None:
+                    cur_entry['details'].append(stripped)
+            if cur_entry:
+                (ok_entries if cur_entry.get('cat') == 'ok' else notok_entries).append(cur_entry)
+
+        total      = len(ok_entries) + len(notok_entries)
+        pass_rate  = (len(ok_entries) / total * 100) if total > 0 else 0.0
+        avg_dur    = (sum(e['duration'] for e in ok_entries) / len(ok_entries)) if ok_entries else 0.0
+
+        # ── Build PDF in memory ────────────────────────────────────────────
+        buf = BytesIO()
+        PAGE_W, PAGE_H = A4
+        MARGIN = 18 * mm
+
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=A4,
+            leftMargin=MARGIN,
+            rightMargin=MARGIN,
+            topMargin=14 * mm,
+            bottomMargin=16 * mm,
+        )
+
+        styles = getSampleStyleSheet()
+
+        # Custom styles
+        def _style(name, **kw):
+            base = kw.pop('base', 'Normal')
+            s = ParagraphStyle(name, parent=styles[base], **kw)
+            return s
+
+        sTitle = _style('Title2', base='Title',
+                        fontName='Helvetica-Bold', fontSize=22,
+                        textColor=WHITE, alignment=TA_CENTER, spaceAfter=2)
+        sSub = _style('Sub', fontName='Helvetica', fontSize=10,
+                      textColor=colors.HexColor('#cce0ff'), alignment=TA_CENTER)
+        sSectionHdr = _style('SecHdr', fontName='Helvetica-Bold', fontSize=11,
+                             textColor=BRAND_DARK, spaceBefore=10, spaceAfter=4)
+        sCell = _style('Cell', fontName='Helvetica', fontSize=8.5,
+                       textColor=GREY_DARK, leading=11)
+        sCellBold = _style('CellB', fontName='Helvetica-Bold', fontSize=8.5,
+                           textColor=GREY_DARK, leading=11)
+        sDetail = _style('Detail', fontName='Helvetica', fontSize=7.5,
+                         textColor=GREY_MID, leading=10)
+        sFooter = _style('Footer', fontName='Helvetica', fontSize=7.5,
+                         textColor=GREY_MID, alignment=TA_CENTER)
+        sKpiNum = _style('KpiNum', fontName='Helvetica-Bold', fontSize=20,
+                         textColor=BRAND_DARK, alignment=TA_CENTER, leading=22)
+        sKpiLbl = _style('KpiLbl', fontName='Helvetica', fontSize=7.5,
+                         textColor=GREY_MID, alignment=TA_CENTER, leading=9)
+
+        story = []
+
+        # ── Header banner (blue gradient via table background) ─────────────
+        header_data = [[
+            Paragraph('🏭  Assembly Vision Monitor', sTitle),
+        ]]
+        sub_data = [[
+            Paragraph(f'Daily Production Report  •  Date: {current_date}  •  Sankar Sealings', sSub),
+        ]]
+        header_table = Table(header_data, colWidths=[PAGE_W - 2*MARGIN])
+        header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), BRAND_MID),
+            ('TOPPADDING',    (0,0), (-1,-1), 14),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING',   (0,0), (-1,-1), 10),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 10),
+            ('ROUNDEDCORNERS', [6]),
+        ]))
+        sub_table = Table(sub_data, colWidths=[PAGE_W - 2*MARGIN])
+        sub_table.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), BRAND_DARK),
+            ('TOPPADDING',    (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+            ('LEFTPADDING',   (0,0), (-1,-1), 10),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 10),
+        ]))
+        story.append(header_table)
+        story.append(sub_table)
+        story.append(Spacer(1, 8))
+
+        # ── KPI Summary cards ──────────────────────────────────────────────
+        kpi_data = [[
+            Paragraph(str(total), sKpiNum),
+            Paragraph(str(len(ok_entries)), _style('KN_ok', fontName='Helvetica-Bold', fontSize=20,
+                      textColor=GREEN_MID, alignment=TA_CENTER, leading=22)),
+            Paragraph(str(len(notok_entries)), _style('KN_nok', fontName='Helvetica-Bold', fontSize=20,
+                      textColor=RED_MID, alignment=TA_CENTER, leading=22)),
+            Paragraph(f'{pass_rate:.1f}%', _style('KN_pr', fontName='Helvetica-Bold', fontSize=20,
+                      textColor=AMBER, alignment=TA_CENTER, leading=22)),
+            Paragraph(f'{avg_dur:.1f}s', _style('KN_avg', fontName='Helvetica-Bold', fontSize=20,
+                      textColor=BRAND_MID, alignment=TA_CENTER, leading=22)),
+        ], [
+            Paragraph('TOTAL CYCLES', sKpiLbl),
+            Paragraph('✔  OK', _style('KL_ok', fontName='Helvetica', fontSize=7.5,
+                      textColor=GREEN_MID, alignment=TA_CENTER, leading=9)),
+            Paragraph('✘  NOT OK', _style('KL_nok', fontName='Helvetica', fontSize=7.5,
+                      textColor=RED_MID, alignment=TA_CENTER, leading=9)),
+            Paragraph('PASS RATE', _style('KL_pr', fontName='Helvetica', fontSize=7.5,
+                      textColor=AMBER, alignment=TA_CENTER, leading=9)),
+            Paragraph('AVG OK DURATION', _style('KL_avg', fontName='Helvetica', fontSize=7.5,
+                      textColor=BRAND_MID, alignment=TA_CENTER, leading=9)),
+        ]]
+        col_w = (PAGE_W - 2*MARGIN) / 5
+        kpi_table = Table(kpi_data, colWidths=[col_w]*5, rowHeights=[30, 14])
+        kpi_table.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (0,1), BRAND_LIGHT),
+            ('BACKGROUND',    (1,0), (1,1), GREEN_LIGHT),
+            ('BACKGROUND',    (2,0), (2,1), RED_LIGHT),
+            ('BACKGROUND',    (3,0), (3,1), AMBER_LIGHT),
+            ('BACKGROUND',    (4,0), (4,1), BRAND_LIGHT),
+            ('ALIGN',         (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',    (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LINEAFTER',     (0,0), (3,1), 0.5, colors.HexColor('#d0d8e8')),
+            ('BOX',           (0,0), (-1,-1), 1, colors.HexColor('#c5d3e8')),
+            ('ROUNDEDCORNERS', [6]),
+        ]))
+        story.append(kpi_table)
+        story.append(Spacer(1, 10))
+
+        # ── Helper: build a cycle detail table ───────────────────────────
+        def build_section(entries, is_ok):
+            if not entries:
+                return []
+            items = []
+            label = '✅  OK Cycles' if is_ok else '❌  Not-OK Cycles'
+            hdr_col = GREEN_DARK if is_ok else RED_DARK
+            row_bg  = GREEN_LIGHT if is_ok else RED_LIGHT
+            row_border = colors.HexColor('#a5d6a7') if is_ok else colors.HexColor('#ef9a9a')
+
+            hdr_style = _style(f'SHdr_{"ok" if is_ok else "nok"}',
+                               fontName='Helvetica-Bold', fontSize=10,
+                               textColor=WHITE, alignment=TA_LEFT,
+                               backColor=hdr_col)
+
+            items.append(Spacer(1, 4))
+            # Section title bar
+            title_data = [[Paragraph(f'  {label}  ({len(entries)} cycles)', hdr_style)]]
+            title_t = Table(title_data, colWidths=[PAGE_W - 2*MARGIN])
+            title_t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), hdr_col),
+                ('TOPPADDING',    (0,0), (-1,-1), 7),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 7),
+                ('LEFTPADDING',   (0,0), (-1,-1), 10),
+                ('RIGHTPADDING',  (0,0), (-1,-1), 10),
+            ]))
+            items.append(title_t)
+            items.append(Spacer(1, 4))
+
+            # Table header
+            TH_BG = colors.HexColor('#bbdefb') if is_ok else colors.HexColor('#ffcdd2')
+            col_widths = [
+                18*mm,  # #
+                22*mm,  # Start
+                22*mm,  # End
+                22*mm,  # Duration
+                PAGE_W - 2*MARGIN - 84*mm,  # Direction / Detail
+            ]
+            th_para = lambda t: Paragraph(f'<b>{t}</b>', _style('TH', fontName='Helvetica-Bold',
+                                          fontSize=8, textColor=GREY_DARK, alignment=TA_CENTER))
+            table_rows = [[
+                th_para('Cycle #'),
+                th_para('Start'),
+                th_para('End'),
+                th_para('Duration'),
+                th_para('Details'),
+            ]]
+
+            for e in sorted(entries, key=lambda x: x['num']):
+                # Pull direction and per-plate info from details
+                direction_str = ''
+                plate_lines = []
+                for dl in e.get('details', []):
+                    if 'Direction:' in dl:
+                        direction_str = dl.replace('Direction:', '').strip()
+                    elif dl.strip().startswith('P') and ':' in dl:
+                        plate_lines.append(dl.strip())
+
+                detail_text = direction_str
+                if plate_lines:
+                    if detail_text:
+                        detail_text += '<br/>'
+                    detail_text += '<br/>'.join(plate_lines[:3])
+
+                detail_para = Paragraph(
+                    detail_text or '-',
+                    _style('DT', fontName='Helvetica', fontSize=7.5,
+                           textColor=GREY_DARK, leading=10)
+                )
+                dur_str = f'{e["duration"]:.1f}s'
+                dur_col = RED_MID if (not is_ok and e['duration'] > 30) else (GREEN_MID if is_ok else GREY_DARK)
+                table_rows.append([
+                    Paragraph(str(e['num']), _style('CN', fontName='Helvetica-Bold', fontSize=9,
+                              textColor=BRAND_DARK, alignment=TA_CENTER)),
+                    Paragraph(e['start'], _style('CS', fontName='Helvetica', fontSize=8.5,
+                              textColor=GREY_DARK, alignment=TA_CENTER)),
+                    Paragraph(e['end'], _style('CE', fontName='Helvetica', fontSize=8.5,
+                              textColor=GREY_DARK, alignment=TA_CENTER)),
+                    Paragraph(dur_str, _style('CD', fontName='Helvetica-Bold', fontSize=9,
+                              textColor=dur_col, alignment=TA_CENTER)),
+                    detail_para,
+                ])
+
+            cyc_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
+            n = len(table_rows)
+            ts = [
+                # Header
+                ('BACKGROUND', (0,0), (-1,0), TH_BG),
+                ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE',   (0,0), (-1,0), 8),
+                ('ALIGN',      (0,0), (-1,0), 'CENTER'),
+                ('VALIGN',     (0,0), (-1,-1), 'TOP'),
+                ('TOPPADDING', (0,0), (-1,-1), 5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                ('LEFTPADDING',  (0,0), (-1,-1), 5),
+                ('RIGHTPADDING', (0,0), (-1,-1), 5),
+                # Data rows alternating
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [WHITE, row_bg]),
+                ('LINEBEFORE',  (0,0), (-1,-1), 0.3, colors.HexColor('#dde3ea')),
+                ('LINEBELOW',   (0,0), (-1,-1), 0.3, colors.HexColor('#dde3ea')),
+                ('BOX',        (0,0), (-1,-1), 1, row_border),
+            ]
+            cyc_table.setStyle(TableStyle(ts))
+            items.append(cyc_table)
+            return items
+
+        story += build_section(ok_entries, is_ok=True)
+        story += build_section(notok_entries, is_ok=False)
+
+        # ── Footer note ───────────────────────────────────────────────────
+        story.append(Spacer(1, 12))
+        story.append(HRFlowable(width='100%', thickness=0.5, color=GREY_MID))
+        story.append(Spacer(1, 4))
+        gen_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        story.append(Paragraph(
+            f'Generated by Assembly Vision Monitor  •  {gen_time}  •  Vidana Consulting — AI Vision Solutions',
+            sFooter))
+
+        # ── Page number canvas callback ────────────────────────────────────
+        def add_page_number(canvas, doc):
+            canvas.saveState()
+            canvas.setFont('Helvetica', 7)
+            canvas.setFillColor(GREY_MID)
+            canvas.drawRightString(
+                PAGE_W - MARGIN,
+                10 * mm,
+                f'Page {doc.page}'
+            )
+            canvas.restoreState()
+
+        doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+        buf.seek(0)
+
+        return send_file(
+            buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'assembly_report_{current_date}.pdf'
+        )
+
+    except ImportError:
+        return (
+            '<h2 style="font-family:sans-serif;color:#c62828">reportlab not installed.</h2>'
+            '<p style="font-family:sans-serif">Run: <code>pip install reportlab</code> then restart the server.</p>',
+            500
+        )
+    except Exception as ex:
+        import traceback
+        return (
+            f'<h2 style="font-family:sans-serif;color:#c62828">PDF generation failed.</h2>'
+            f'<pre style="font-family:monospace">{traceback.format_exc()}</pre>',
+            500
+        )
+
+
+@app.route('/report_dashboard')
+def report_dashboard():
+    """Serve the cumulative report dashboard page."""
+    return render_template('report_dashboard.html')
+
+
+def _parse_all_logs():
+    """
+    Parse every log file in assembly_logs/ and return structured data.
+    Returns:
+        all_entries : list of dicts with keys:
+            date, num, start, end, duration, cat ('ok'/'notok'), details (list of str)
+        cumulative  : dict with keys p1_inner, p1_outer, p2_inner, p2_outer,
+                      p3_inner, p3_outer, total_ok, total_notok
+    """
+    import re as _re
+
+    log_dir = get_log_dir()
+    all_entries = []
+
+    # Collect all *.txt log files sorted by name (date order)
+    log_files = sorted(
+        [f for f in os.listdir(log_dir) if f.endswith('.txt')],
+        key=lambda x: x
+    )
+
+    for fname in log_files:
+        date_str = fname.replace('.txt', '')
+        fpath = os.path.join(log_dir, fname)
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                raw = [l.rstrip('\n') for l in f.readlines()]
+        except Exception:
+            continue
+
+        cur_cat = None
+        cur_entry = None
+
+        def _parse_cycle_line(line):
+            m = _re.search(r'Cycle\s+(\d+).*?Start\s+([\d:]+).*?End\s+([\d:]+).*?Duration:\s*([\d.]+)s', line)
+            if m:
+                return {
+                    'num': int(m.group(1)),
+                    'start': m.group(2),
+                    'end': m.group(3),
+                    'duration': float(m.group(4)),
+                }
+            m2 = _re.search(r'Cycle\s+(\d+)', line)
+            return {'num': int(m2.group(1)) if m2 else 0, 'start': '-', 'end': '-', 'duration': 0.0}
+
+        for line in raw:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if _is_date_header(stripped):
+                if cur_entry is not None:
+                    all_entries.append(cur_entry)
+                    cur_entry = None
+                cur_cat = None
+            elif stripped.startswith('OK:'):
+                if cur_entry is not None:
+                    all_entries.append(cur_entry)
+                    cur_entry = None
+                cur_cat = 'ok'
+            elif stripped.startswith('Not OK:'):
+                if cur_entry is not None:
+                    all_entries.append(cur_entry)
+                    cur_entry = None
+                cur_cat = 'notok'
+            elif stripped.startswith('- Cycle'):
+                if cur_entry is not None:
+                    all_entries.append(cur_entry)
+                cur_entry = _parse_cycle_line(stripped)
+                cur_entry['date'] = date_str
+                cur_entry['cat'] = cur_cat if cur_cat else 'ok'
+                cur_entry['details'] = []
+            elif cur_entry is not None:
+                cur_entry['details'].append(stripped)
+
+        if cur_entry is not None:
+            all_entries.append(cur_entry)
+
+    # Build cumulative missing counts per plate
+    # "missing" = ring was NOT placed in that cycle (inner or outer per plate)
+    cum = {
+        'p1_inner': 0, 'p1_outer': 0,
+        'p2_inner': 0, 'p2_outer': 0,
+        'p3_inner': 0, 'p3_outer': 0,
+        'total_ok': 0, 'total_notok': 0,
+    }
+
+    import re as _re2
+    for entry in all_entries:
+        if entry['cat'] == 'ok':
+            cum['total_ok'] += 1
+        else:
+            cum['total_notok'] += 1
+
+        # Parse per-plate info from detail lines
+        # e.g.  "P1: placed inner ring at 10:00:01, placed outer ring at 10:00:02"
+        #       "P2: inner ring NOT placed, placed outer ring at 10:00:05"
+        for dl in entry.get('details', []):
+            dl = dl.strip()
+            m = _re2.match(r'(P[123]):\s*(.*)', dl)
+            if not m:
+                continue
+            plate_id = m.group(1)   # 'P1', 'P2', 'P3'
+            content = m.group(2)
+            key_prefix = plate_id.lower()  # 'p1', 'p2', 'p3'
+
+            inner_missing = 'inner ring NOT placed' in content.lower()
+            outer_missing = 'outer ring NOT placed' in content.lower()
+
+            if inner_missing:
+                cum[f'{key_prefix}_inner'] += 1
+            if outer_missing:
+                cum[f'{key_prefix}_outer'] += 1
+
+    return all_entries, cum
+
+
+@app.route('/cumulative_stats')
+def cumulative_stats():
+    """Return cumulative missing-ring stats. Optional ?date=YYYY-MM-DD to filter to one day."""
+    date_filter = request.args.get('date', None)
+
+    all_entries, cum_all = _parse_all_logs()
+
+    # If a specific date is requested, filter entries
+    if date_filter:
+        entries_for_date = [e for e in all_entries if e['date'] == date_filter]
+    else:
+        entries_for_date = all_entries
+
+    # Recompute cumulative counts for the filtered set
+    cum = {
+        'p1_inner': 0, 'p1_outer': 0,
+        'p2_inner': 0, 'p2_outer': 0,
+        'p3_inner': 0, 'p3_outer': 0,
+        'total_ok': 0, 'total_notok': 0,
+    }
+    import re as _re3
+    for entry in entries_for_date:
+        if entry['cat'] == 'ok':
+            cum['total_ok'] += 1
+        else:
+            cum['total_notok'] += 1
+        for dl in entry.get('details', []):
+            dl = dl.strip()
+            m = _re3.match(r'(P[123]):\s*(.*)', dl)
+            if not m:
+                continue
+            key_prefix = m.group(1).lower()
+            content = m.group(2)
+            if 'inner ring not placed' in content.lower():
+                cum[f'{key_prefix}_inner'] += 1
+            if 'outer ring not placed' in content.lower():
+                cum[f'{key_prefix}_outer'] += 1
+
+    # Sorted entries for the detail table
+    sorted_entries = sorted(entries_for_date, key=lambda x: (x['date'], x['num']))
+    entries_out = []
+    for e in sorted_entries:
+        entries_out.append({
+            'date': e['date'],
+            'num': e['num'],
+            'start': e['start'],
+            'end': e['end'],
+            'duration': round(e['duration'], 1),
+            'cat': e['cat'],
+            'details': e.get('details', []),
+        })
+
+    # Available dates (for the date picker dropdown)
+    log_dir = get_log_dir()
+    available_dates = sorted(
+        [f.replace('.txt', '') for f in os.listdir(log_dir) if f.endswith('.txt')],
+        reverse=True
+    )
+
+    return jsonify(
+        cumulative=cum,
+        entries=entries_out,
+        total=len(entries_for_date),
+        available_dates=available_dates,
+    )
+
+@app.route('/get_roi')
+def get_roi():
+    """Get current ROI parameters."""
+    return jsonify(
+        y1=state.roi_y1,
+        y2=state.roi_y2,
+        p1_x1=state.roi_p1_x1,
+        p1_x2=state.roi_p1_x2,
+        p2_x1=state.roi_p2_x1,
+        p2_x2=state.roi_p2_x2,
+        p3_x1=state.roi_p3_x1,
+        p3_x2=state.roi_p3_x2,
+        threshold=state.threshold
+    )
+
+@app.route('/set_roi', methods=['POST'])
+def set_roi():
+    """Update ROI parameters dynamically."""
+    data = request.json or {}
+    if 'y1' in data: state.roi_y1 = float(data['y1'])
+    if 'y2' in data: state.roi_y2 = float(data['y2'])
+    if 'p1_x1' in data: state.roi_p1_x1 = float(data['p1_x1'])
+    if 'p1_x2' in data: state.roi_p1_x2 = float(data['p1_x2'])
+    if 'p2_x1' in data: state.roi_p2_x1 = float(data['p2_x1'])
+    if 'p2_x2' in data: state.roi_p2_x2 = float(data['p2_x2'])
+    if 'p3_x1' in data: state.roi_p3_x1 = float(data['p3_x1'])
+    if 'p3_x2' in data: state.roi_p3_x2 = float(data['p3_x2'])
+    return jsonify(status='success')
+
+@app.route('/reset_roi', methods=['POST'])
+def reset_roi():
+    """Reset ROI parameters to defaults."""
+    state.roi_y1 = 0.47
+    state.roi_y2 = 0.83
+    state.roi_p1_x1 = 0.18
+    state.roi_p1_x2 = 0.385
+    state.roi_p2_x1 = 0.39
+    state.roi_p2_x2 = 0.575
+    state.roi_p3_x1 = 0.58
+    state.roi_p3_x2 = 0.76
+    return jsonify(status='success')
+
+
+def get_presets_file_path():
+    return os.path.join(os.path.dirname(__file__), 'roi_presets.json')
+
+def load_presets():
+    import json
+    file_path = get_presets_file_path()
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading presets: {e}")
+    # Default fallback - return 0.0 values if not saved
+    empty_slot = {
+        "y1": 0.0, "y2": 0.0,
+        "p1_x1": 0.0, "p1_x2": 0.0,
+        "p2_x1": 0.0, "p2_x2": 0.0,
+        "p3_x1": 0.0, "p3_x2": 0.0
+    }
+    return {"memory1": empty_slot.copy(), "memory2": empty_slot.copy()}
+
+def save_presets(presets):
+    import json
+    file_path = get_presets_file_path()
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(presets, f, indent=2)
+    except Exception as e:
+        print(f"Error saving presets: {e}")
+
+@app.route('/get_presets')
+def get_presets():
+    """Load and return current memory presets."""
+    return jsonify(load_presets())
+
+@app.route('/save_preset', methods=['POST'])
+def save_preset_route():
+    """Save the current active ROI boundaries into a preset slot."""
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_presets()
+    presets[slot] = {
+        "y1": state.roi_y1,
+        "y2": state.roi_y2,
+        "p1_x1": state.roi_p1_x1,
+        "p1_x2": state.roi_p1_x2,
+        "p2_x1": state.roi_p2_x1,
+        "p2_x2": state.roi_p2_x2,
+        "p3_x1": state.roi_p3_x1,
+        "p3_x2": state.roi_p3_x2
+    }
+    save_presets(presets)
+    return jsonify(status='success')
+
+@app.route('/load_preset', methods=['POST'])
+def load_preset_route():
+    """Load and apply a preset slot's ROI boundaries to active state."""
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_presets()
+    p = presets.get(slot)
+    if p:
+        state.roi_y1 = p.get('y1', 0.47)
+        state.roi_y2 = p.get('y2', 0.83)
+        state.roi_p1_x1 = p.get('p1_x1', 0.18)
+        state.roi_p1_x2 = p.get('p1_x2', 0.385)
+        state.roi_p2_x1 = p.get('p2_x1', 0.39)
+        state.roi_p2_x2 = p.get('p2_x2', 0.575)
+        state.roi_p3_x1 = p.get('p3_x1', 0.58)
+        state.roi_p3_x2 = p.get('p3_x2', 0.76)
+    return jsonify(status='success')
+
+@app.route('/clear_preset', methods=['POST'])
+def clear_preset_route():
+    """Clear a preset slot by resetting it to 0.0 ROI parameters."""
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_presets()
+    presets[slot] = {
+        "y1": 0.0,
+        "y2": 0.0,
+        "p1_x1": 0.0,
+        "p1_x2": 0.0,
+        "p2_x1": 0.0,
+        "p2_x2": 0.0,
+        "p3_x1": 0.0,
+        "p3_x2": 0.0
+    }
+    save_presets(presets)
+    return jsonify(status='success')
+
+
+# ── Threshold Preset Memories ───────────────────────────────────────
+def get_thresh_presets_file_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'thresh_presets.json')
+
+def load_thresh_presets():
+    import json
+    file_path = get_thresh_presets_file_path()
+    if not os.path.exists(file_path):
+        return {
+            "memory1": {"threshold": 0.0},
+            "memory2": {"threshold": 0.0}
+        }
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading thresh presets: {e}")
+        return {
+            "memory1": {"threshold": 0.0},
+            "memory2": {"threshold": 0.0}
+        }
+
+def save_thresh_presets(presets):
+    import json
+    file_path = get_thresh_presets_file_path()
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(presets, f, indent=2)
+    except Exception as e:
+        print(f"Error saving thresh presets: {e}")
+
+@app.route('/get_thresh_presets')
+def get_thresh_presets_route():
+    return jsonify(load_thresh_presets())
+
+@app.route('/save_thresh_preset', methods=['POST'])
+def save_thresh_preset_route():
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_thresh_presets()
+    presets[slot] = {
+        "threshold": state.threshold
+    }
+    save_thresh_presets(presets)
+    return jsonify(status='success')
+
+@app.route('/load_thresh_preset', methods=['POST'])
+def load_thresh_preset_route():
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_thresh_presets()
+    p = presets.get(slot)
+    if p:
+        state.threshold = p.get('threshold', 4.0)
+    return jsonify(status='success')
+
+@app.route('/clear_thresh_preset', methods=['POST'])
+def clear_thresh_preset_route():
+    data = request.json or {}
+    slot = data.get('slot')  # 'memory1' or 'memory2'
+    if slot not in ['memory1', 'memory2']:
+        return jsonify(status='error', message='Invalid slot'), 400
+    
+    presets = load_thresh_presets()
+    presets[slot] = {
+        "threshold": 0.0
+    }
+    save_thresh_presets(presets)
+    return jsonify(status='success')
+
 
 if __name__ == '__main__':
     # Start the Flask app

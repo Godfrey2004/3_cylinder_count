@@ -14,6 +14,19 @@
             <h1>Assembly Vision Monitor</h1>
             <p>Vidana Consulting — AI Vision Solutions</p>
         </div>
+        <!-- Report Dashboard Button (top header) -->
+        <a href="/report_dashboard" target="_blank"
+           style="display:flex;align-items:center;gap:7px;padding:6px 14px;
+                  border-radius:20px;border:1.5px solid #6a1b9a60;
+                  background:linear-gradient(135deg,#6a1b9a,#4527a0);
+                  color:#fff;font-weight:800;font-size:12px;
+                  text-decoration:none;cursor:pointer;user-select:none;
+                  box-shadow:0 2px 8px rgba(90,50,170,.3);
+                  transition:all .2s;margin-left:auto;white-space:nowrap;"
+           onmouseover="this.style.boxShadow='0 4px 14px rgba(90,50,170,.5)';this.style.transform='translateY(-1px)'"
+           onmouseout="this.style.boxShadow='0 2px 8px rgba(90,50,170,.3)';this.style.transform='translateY(0)'">
+            📊 Report Dashboard
+        </a>
         <!-- Beep Alert Toggle Pill -->
         <div id="beep-pill" onclick="toggleBeep()" title="Toggle missing-part beep alert" style="display:flex;align-items:center;gap:7px;padding:5px 13px 5px 9px;
                         border-radius:20px;border:1.5px solid #0b905060;background:#e2f7ee;
@@ -29,7 +42,6 @@
                             border-radius:50%;background:#fff;transition:all .2s;
                             box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>
             </div>
-        </div>
         </div>
     </header>
 
@@ -107,13 +119,149 @@
 
                 <div class="section">
                     <h3>EDGE THRESHOLD</h3>
-                    <form action="/set_threshold" method="get" class="slider-form">
-                        <input type="range" name="val" min="1" max="10" step="0.5" value="{{ threshold }}"
-                            oninput="document.getElementById('thresh-display').textContent=parseFloat(this.value).toFixed(1)"
-                            onchange="this.form.submit()">
+                    <div class="slider-form" style="margin-bottom:4px;">
+                        <input type="range" id="thresh-slider" name="val" min="1" max="10" step="0.5" value="{{ threshold }}"
+                            oninput="updateThreshSlider(this.value)"
+                            onchange="updateThreshSliderBackend(this.value)">
                         <span class="slider-val" id="thresh-display">{{ '%.1f'|format(threshold) }}</span>
-                    </form>
-                    <p class="help-text">Lower = more sensitive</p>
+                    </div>
+                    <button type="button" onclick="resetThresh()" style="margin-top:2px; margin-bottom:8px; padding:6px 8px; border-radius:6px; border:1px solid #bdc3c7; background:#fff; font-weight:700; color:#34495e; cursor:pointer; font-size:11px; transition:all .15s; width: 100%; text-align: center;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                        ↺ Reset to Default (4.0)
+                    </button>
+
+                    <!-- Threshold Memories -->
+                    <div style="border-top: 1.5px solid #eceff1; margin-top: 8px; padding-top: 8px;">
+                        <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:6px;">THRESHOLD MEMORIES</span>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <button type="button" onclick="applyThreshPreset('memory1')" style="padding:6px; border-radius:4px; border:1px solid #1abc9c; background:#e8f8f5; font-weight:700; color:#16a085; cursor:pointer; font-size:11px; transition:all .15s; outline:none;" onmouseover="this.style.background='#d1f2eb'" onmouseout="this.style.background='#e8f8f5'">
+                                    Memory 1
+                                </button>
+                                <div style="font-size:9px; color:#7f8c8d; text-align:center; margin-top:-2px; margin-bottom:2px; font-weight:600;" id="t1-thresh-lbl">Thresh: --</div>
+                                <button type="button" onclick="saveThreshPreset('memory1')" style="padding:4px; border-radius:4px; border:1px solid #bdc3c7; background:#fff; font-weight:600; color:#7f8c8d; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                                    💾 Save to M1
+                                </button>
+                                <button type="button" onclick="clearThreshPreset('memory1')" style="padding:4px; border-radius:4px; border:1px solid #e74c3c60; background:#fdf2f2; font-weight:600; color:#c0392b; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#fadbd8'" onmouseout="this.style.background='#fdf2f2'">
+                                    🗑️ Delete M1
+                                </button>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <button type="button" onclick="applyThreshPreset('memory2')" style="padding:6px; border-radius:4px; border:1px solid #e67e22; background:#fdf2e9; font-weight:700; color:#d35400; cursor:pointer; font-size:11px; transition:all .15s; outline:none;" onmouseover="this.style.background='#fae5d3'" onmouseout="this.style.background='#fdf2e9'">
+                                    Memory 2
+                                </button>
+                                <div style="font-size:9px; color:#7f8c8d; text-align:center; margin-top:-2px; margin-bottom:2px; font-weight:600;" id="t2-thresh-lbl">Thresh: --</div>
+                                <button type="button" onclick="saveThreshPreset('memory2')" style="padding:4px; border-radius:4px; border:1px solid #bdc3c7; background:#fff; font-weight:600; color:#7f8c8d; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                                    💾 Save to M2
+                                </button>
+                                <button type="button" onclick="clearThreshPreset('memory2')" style="padding:4px; border-radius:4px; border:1px solid #e74c3c60; background:#fdf2f2; font-weight:600; color:#c0392b; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#fadbd8'" onmouseout="this.style.background='#fdf2f2'">
+                                    🗑️ Delete M2
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="help-text" style="margin-top:6px;">Lower = more sensitive</p>
+                </div>
+
+                <div class="section">
+                    <h3>ROI CONFIGURATION</h3>
+                    <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+                        
+                        <!-- Y Bounds -->
+                        <div style="border-bottom: 1.5px solid #eceff1; padding-bottom: 8px; margin-bottom: 4px;">
+                            <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:4px;">HEIGHT BOUNDS (Y)</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Top:</span>
+                                <input type="range" id="roi-y1" min="0" max="100" step="1" value="47" style="flex:1;" oninput="updateROISlider('y1', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:30px; text-align:right;" id="val-y1">47%</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Bottom:</span>
+                                <input type="range" id="roi-y2" min="0" max="100" step="1" value="83" style="flex:1;" oninput="updateROISlider('y2', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:30px; text-align:right;" id="val-y2">83%</span>
+                            </div>
+                        </div>
+
+                        <!-- P1 Bounds -->
+                        <div style="border-bottom: 1.5px solid #eceff1; padding-bottom: 8px; margin-bottom: 4px;">
+                            <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:4px;">PLATE 1 (P1)</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Left:</span>
+                                <input type="range" id="roi-p1_x1" min="0" max="100" step="0.5" value="18" style="flex:1;" oninput="updateROISlider('p1_x1', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p1_x1">18%</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Right:</span>
+                                <input type="range" id="roi-p1_x2" min="0" max="100" step="0.5" value="38.5" style="flex:1;" oninput="updateROISlider('p1_x2', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p1_x2">38.5%</span>
+                            </div>
+                        </div>
+
+                        <!-- P2 Bounds -->
+                        <div style="border-bottom: 1.5px solid #eceff1; padding-bottom: 8px; margin-bottom: 4px;">
+                            <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:4px;">PLATE 2 (P2)</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Left:</span>
+                                <input type="range" id="roi-p2_x1" min="0" max="100" step="0.5" value="39" style="flex:1;" oninput="updateROISlider('p2_x1', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p2_x1">39%</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Right:</span>
+                                <input type="range" id="roi-p2_x2" min="0" max="100" step="0.5" value="57.5" style="flex:1;" oninput="updateROISlider('p2_x2', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p2_x2">57.5%</span>
+                            </div>
+                        </div>
+
+                        <!-- P3 Bounds -->
+                        <div style="border-bottom: 1.5px solid #eceff1; padding-bottom: 8px; margin-bottom: 4px;">
+                            <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:4px;">PLATE 3 (P3)</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Left:</span>
+                                <input type="range" id="roi-p3_x1" min="0" max="100" step="0.5" value="58" style="flex:1;" oninput="updateROISlider('p3_x1', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p3_x1">58%</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                                <span style="font-size:10px; width:45px; color:#64748b;">Right:</span>
+                                <input type="range" id="roi-p3_x2" min="0" max="100" step="0.5" value="76" style="flex:1;" oninput="updateROISlider('p3_x2', this.value)">
+                                <span style="font-size:11px; font-weight:700; width:35px; text-align:right;" id="val-p3_x2">76%</span>
+                            </div>
+                        </div>
+
+                        <!-- Reset Button -->
+                        <button type="button" onclick="resetROI()" style="margin-top:4px; padding:8px 10px; border-radius:6px; border:1px solid #bdc3c7; background:#fff; font-weight:700; color:#34495e; cursor:pointer; font-size:11px; transition:all .15s;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                            ↺ Reset to Defaults
+                        </button>
+
+                        <!-- Preset ROI Memories -->
+                        <div style="border-top: 1.5px solid #eceff1; margin-top: 8px; padding-top: 8px;">
+                            <span style="font-size:10px; font-weight:700; color:#475569; display:block; margin-bottom:6px;">PRESET ROI MEMORIES</span>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                                <div style="display:flex; flex-direction:column; gap:4px;">
+                                    <button type="button" onclick="applyPreset('memory1')" style="padding:6px; border-radius:4px; border:1px solid #3498db; background:#ebf5fb; font-weight:700; color:#2980b9; cursor:pointer; font-size:11px; transition:all .15s; outline:none;" onmouseover="this.style.background='#d4e6f1'" onmouseout="this.style.background='#ebf5fb'">
+                                        Memory 1
+                                    </button>
+                                    <div style="font-size:8.5px; color:#546e7a; text-align:center; margin-top:-2px; margin-bottom:2px; font-weight:600; line-height:1.2; border:1px solid #cfd8dc; background:#f8f9fa; padding:2px; border-radius:3px;" id="m1-roi-lbl">0</div>
+                                    <button type="button" onclick="savePreset('memory1')" style="padding:4px; border-radius:4px; border:1px solid #bdc3c7; background:#fff; font-weight:600; color:#7f8c8d; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                                        💾 Save current to M1
+                                    </button>
+                                    <button type="button" onclick="clearPreset('memory1')" style="padding:4px; border-radius:4px; border:1px solid #e74c3c60; background:#fdf2f2; font-weight:600; color:#c0392b; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#fadbd8'" onmouseout="this.style.background='#fdf2f2'">
+                                        🗑️ Delete M1
+                                    </button>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:4px;">
+                                    <button type="button" onclick="applyPreset('memory2')" style="padding:6px; border-radius:4px; border:1px solid #9b59b6; background:#f5eef8; font-weight:700; color:#8e44ad; cursor:pointer; font-size:11px; transition:all .15s; outline:none;" onmouseover="this.style.background='#ebdef0'" onmouseout="this.style.background='#f5eef8'">
+                                        Memory 2
+                                    </button>
+                                    <div style="font-size:8.5px; color:#546e7a; text-align:center; margin-top:-2px; margin-bottom:2px; font-weight:600; line-height:1.2; border:1px solid #cfd8dc; background:#f8f9fa; padding:2px; border-radius:3px;" id="m2-roi-lbl">0</div>
+                                    <button type="button" onclick="savePreset('memory2')" style="padding:4px; border-radius:4px; border:1px solid #bdc3c7; background:#fff; font-weight:600; color:#7f8c8d; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#f2f2f2'" onmouseout="this.style.background='#fff'">
+                                        💾 Save current to M2
+                                    </button>
+                                    <button type="button" onclick="clearPreset('memory2')" style="padding:4px; border-radius:4px; border:1px solid #e74c3c60; background:#fdf2f2; font-weight:600; color:#c0392b; cursor:pointer; font-size:9px; transition:all .15s; outline:none;" onmouseover="this.style.background='#fadbd8'" onmouseout="this.style.background='#fdf2f2'">
+                                        🗑️ Delete M2
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </aside>
@@ -382,8 +530,15 @@
                     <!-- Bottom stats and download -->
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; font-weight: 700; color: #546e7a; border-top: 1.5px solid #eceff1; padding-top: 8px;">
                         <div>Total: <span id="bottom-total-count">{{ cycle_count }}</span> | OK: <span id="bottom-ok-count">{{ ok_count }}</span> | <span style="color: #c62828;">Not OK: <span id="bottom-notok-count">{{ notok_count }}</span></span></div>
-                        <a href="/download_log" style="color: #0b4ea2; text-decoration: none; display: flex; align-items: center; gap: 2px; font-weight: 700;" download>
-                            ⬇ Download
+                        <a href="/download_pdf_report" id="download-pdf-btn"
+                           style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;
+                                  border-radius:6px;background:linear-gradient(135deg,#1565c0,#0b3d91);
+                                  color:#fff;text-decoration:none;font-weight:700;font-size:11px;
+                                  box-shadow:0 2px 6px rgba(11,61,145,.35);
+                                  transition:all .2s;letter-spacing:.03em;" download
+                           onmouseover="this.style.boxShadow='0 4px 12px rgba(11,61,145,.55)';this.style.transform='translateY(-1px)'"
+                           onmouseout="this.style.boxShadow='0 2px 6px rgba(11,61,145,.35)';this.style.transform='translateY(0)'">
+                            📄 Download PDF Report
                         </a>
                     </div>
                 </div>
@@ -696,9 +851,240 @@
                     }
                 }
 
+                // ── ROI Slider handlers ───────────────────────────────────────────
+                function updateROISlider(param, value) {
+                    const displayVal = parseFloat(value).toFixed(param.includes('_x') ? 1 : 0);
+                    const lbl = document.getElementById('val-' + param);
+                    if (lbl) lbl.textContent = displayVal + '%';
+
+                    const valFrac = parseFloat(value) / 100;
+                    fetch('/set_roi', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ [param]: valFrac })
+                    }).catch(err => console.error("Error setting ROI:", err));
+                }
+
+                function resetROI() {
+                    fetch('/reset_roi', { method: 'POST' })
+                        .then(r => r.json())
+                        .then(() => { loadROIValues(); })
+                        .catch(err => console.error("Error resetting ROI:", err));
+                }
+
+                function loadROIValues() {
+                    fetch('/get_roi')
+                        .then(r => r.json())
+                        .then(data => {
+                            const params = ['y1', 'y2', 'p1_x1', 'p1_x2', 'p2_x1', 'p2_x2', 'p3_x1', 'p3_x2'];
+                            params.forEach(p => {
+                                const slider = document.getElementById('roi-' + p);
+                                const lbl = document.getElementById('val-' + p);
+                                if (data[p] !== undefined) {
+                                    const pctVal = data[p] * 100;
+                                    if (slider) slider.value = pctVal;
+                                    if (lbl) {
+                                        const displayVal = pctVal.toFixed(p.includes('_x') ? 1 : 0);
+                                        lbl.textContent = displayVal + '%';
+                                    }
+                                }
+                            });
+                            if (data.threshold !== undefined) {
+                                const threshSlider = document.getElementById('thresh-slider');
+                                const threshDisp = document.getElementById('thresh-display');
+                                if (threshSlider) threshSlider.value = data.threshold;
+                                if (threshDisp) threshDisp.textContent = parseFloat(data.threshold).toFixed(1);
+                            }
+                        })
+                        .catch(err => console.error("Error fetching ROI values:", err));
+                }
+
+                function loadROIPresets() {
+                    fetch('/get_presets')
+                        .then(r => r.json())
+                        .then(data => {
+                            ['memory1', 'memory2'].forEach(slot => {
+                                const lbl = document.getElementById(slot === 'memory1' ? 'm1-roi-lbl' : 'm2-roi-lbl');
+                                if (!lbl) return;
+                                const p = data[slot];
+                                if (!p || !p.y1 || p.y1 === 0) {
+                                    lbl.innerHTML = '0';
+                                } else {
+                                    const y1 = Math.round(p.y1 * 100);
+                                    const y2 = Math.round(p.y2 * 100);
+                                    const p1_x1 = (p.p1_x1 * 100).toFixed(1);
+                                    const p1_x2 = (p.p1_x2 * 100).toFixed(1);
+                                    const p2_x1 = (p.p2_x1 * 100).toFixed(1);
+                                    const p2_x2 = (p.p2_x2 * 100).toFixed(1);
+                                    const p3_x1 = (p.p3_x1 * 100).toFixed(1);
+                                    const p3_x2 = (p.p3_x2 * 100).toFixed(1);
+                                    lbl.innerHTML = `Y: ${y1}-${y2}%<br>P1: ${p1_x1}-${p1_x2}%<br>P2: ${p2_x1}-${p2_x2}%<br>P3: ${p3_x1}-${p3_x2}%`;
+                                }
+                            });
+                        })
+                        .catch(err => console.error("Error loading ROI presets:", err));
+                }
+
+                function savePreset(slotName) {
+                    fetch('/save_preset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ slot: slotName })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(slotName.toUpperCase().replace('MEMORY', 'Memory ') + ' saved successfully!');
+                            loadROIPresets();
+                        }
+                    })
+                    .catch(err => console.error("Error saving preset:", err));
+                }
+
+                function applyPreset(slotName) {
+                    fetch('/get_presets')
+                        .then(r => r.json())
+                        .then(data => {
+                            const p = data[slotName];
+                            if (!p || !p.y1 || p.y1 === 0) {
+                                alert("Memory slot is empty! Save ROI parameters first.");
+                                return;
+                            }
+                            fetch('/load_preset', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ slot: slotName })
+                            })
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data.status === 'success') {
+                                    loadROIValues();
+                                }
+                            });
+                        })
+                        .catch(err => console.error("Error loading ROI preset:", err));
+                }
+
+                function clearPreset(slotName) {
+                    if (confirm("Are you sure you want to delete/reset " + slotName.toUpperCase().replace('MEMORY', 'Memory ') + "?")) {
+                        fetch('/clear_preset', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ slot: slotName })
+                        })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                alert(slotName.toUpperCase().replace('MEMORY', 'Memory ') + ' deleted (reset to 0.0) successfully!');
+                                loadROIValues();
+                                loadROIPresets();
+                            }
+                        })
+                        .catch(err => console.error("Error clearing preset:", err));
+                    }
+                }
+
+                // ── Threshold Preset Memories Javascript ──
+                function updateThreshSlider(val) {
+                    document.getElementById('thresh-display').textContent = parseFloat(val).toFixed(1);
+                }
+
+                function updateThreshSliderBackend(val) {
+                    fetch('/set_threshold?val=' + val)
+                        .catch(err => console.error("Error setting threshold:", err));
+                }
+
+                function resetThresh() {
+                    fetch('/set_threshold?val=4.0')
+                        .then(() => {
+                            loadROIValues();
+                        })
+                        .catch(err => console.error("Error resetting threshold:", err));
+                }
+
+                function loadThreshPresets() {
+                    fetch('/get_thresh_presets')
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.memory1 && data.memory1.threshold !== undefined && data.memory1.threshold > 0) {
+                                document.getElementById('t1-thresh-lbl').textContent = 'Thresh: ' + parseFloat(data.memory1.threshold).toFixed(1);
+                            } else {
+                                document.getElementById('t1-thresh-lbl').textContent = 'Thresh: 0.0';
+                            }
+                            if (data.memory2 && data.memory2.threshold !== undefined && data.memory2.threshold > 0) {
+                                document.getElementById('t2-thresh-lbl').textContent = 'Thresh: ' + parseFloat(data.memory2.threshold).toFixed(1);
+                            } else {
+                                document.getElementById('t2-thresh-lbl').textContent = 'Thresh: 0.0';
+                            }
+                        })
+                        .catch(err => console.error("Error loading thresh presets:", err));
+                }
+
+                function saveThreshPreset(slotName) {
+                    fetch('/save_thresh_preset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ slot: slotName })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(slotName.toUpperCase().replace('MEMORY', 'Memory ') + ' saved successfully!');
+                            loadThreshPresets();
+                        }
+                    })
+                    .catch(err => console.error("Error saving thresh preset:", err));
+                }
+
+                function applyThreshPreset(slotName) {
+                    fetch('/get_thresh_presets')
+                        .then(r => r.json())
+                        .then(data => {
+                            const val = (data[slotName] && data[slotName].threshold) || 0.0;
+                            if (val <= 0) {
+                                alert("Memory slot is empty! Save a threshold value first.");
+                                return;
+                            }
+                            fetch('/load_thresh_preset', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ slot: slotName })
+                            })
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data.status === 'success') {
+                                    loadROIValues();
+                                }
+                            });
+                        })
+                        .catch(err => console.error("Error loading thresh preset:", err));
+                }
+
+                function clearThreshPreset(slotName) {
+                    if (confirm("Are you sure you want to delete/reset " + slotName.toUpperCase().replace('MEMORY', 'Memory ') + " threshold?")) {
+                        fetch('/clear_thresh_preset', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ slot: slotName })
+                        })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                alert(slotName.toUpperCase().replace('MEMORY', 'Memory ') + ' threshold deleted (reset to 0.0) successfully!');
+                                loadROIValues();
+                                loadThreshPresets();
+                            }
+                        })
+                        .catch(err => console.error("Error clearing thresh preset:", err));
+                    }
+                }
+
                 window.addEventListener('DOMContentLoaded', () => {
                     const showAnno = document.body.dataset.showAnnotations === 'true';
                     updateAnnoPill(showAnno);
+                    loadROIValues();
+                    loadThreshPresets();
+                    loadROIPresets();
                     if (document.body.dataset.autoCam === 'true') {
                         openCamModal();
                     }
